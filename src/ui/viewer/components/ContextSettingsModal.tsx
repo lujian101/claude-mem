@@ -394,6 +394,17 @@ export function ContextSettingsModal({
                     />
                   </FormField>
                   <FormField
+                    label="Base URL"
+                    tooltip="API endpoint URL - default is OpenRouter, can be configured for domestic models like Zhipu GLM"
+                  >
+                    <input
+                      type="text"
+                      value={formState.CLAUDE_MEM_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions'}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_BASE_URL', e.target.value)}
+                      placeholder="https://openrouter.ai/api/v1/chat/completions"
+                    />
+                  </FormField>
+                  <FormField
                     label="OpenRouter Model"
                     tooltip="Model identifier from OpenRouter (e.g., anthropic/claude-3.5-sonnet, google/gemini-2.0-flash-thinking-exp)"
                   >

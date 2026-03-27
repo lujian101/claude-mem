@@ -10,49 +10,9 @@
  */
 
 import path from 'path';
-import net from 'net';
 import { readFileSync } from 'fs';
 import { logger } from '../../utils/logger.js';
 import { MARKETPLACE_ROOT } from '../../shared/paths.js';
-
-/**
- * Check if a port is in use using TCP connection (fast, 1s timeout).
- * This avoids Bun's libuv assertion issues with AbortSignal.timeout on Windows.
- * Returns true if something is listening on the port (doesn't verify it's claude-mem).
- */
-async function isPortInUseTcp(port: number, timeoutMs: number = 1000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    let resolved = false;
-
-    const cleanup = () => {
-      if (resolved) return;
-      resolved = true;
-      try {
-        socket.destroy();
-      } catch {
-        // Ignore cleanup errors
-      }
-    };
-
-    const timeout = setTimeout(() => {
-      cleanup();
-      resolve(false); // Timeout = port not reachable
-    }, timeoutMs);
-
-    socket.connect(port, '127.0.0.1', () => {
-      clearTimeout(timeout);
-      cleanup();
-      resolve(true); // Connected = port in use
-    });
-
-    socket.on('error', () => {
-      clearTimeout(timeout);
-      cleanup();
-      resolve(false); // Connection error = port not in use
-    });
-  });
-}
 
 /**
  * Make an HTTP request to the worker via TCP.
@@ -75,21 +35,15 @@ async function httpRequestToWorker(
 }
 
 /**
- * Check if a port is in use using fast TCP connection.
- * This replaces the previous HTTP-based check which could hang for minutes
- * when the port was occupied by a non-HTTP service or had connection issues.
- *
- * Returns true if something is listening on the port (regardless of whether it's claude-mem).
- * The health check logic in ensureWorkerStarted will verify if it's actually our worker.
+ * Check if a port is in use by querying the health endpoint
  */
 export async function isPortInUse(port: number): Promise<boolean> {
   try {
-    // Use TCP connection check (1s timeout) instead of HTTP fetch
-    // This avoids Bun libuv assertion issues and is much faster
-    return await isPortInUseTcp(port, 1000);
+    // Note: Removed AbortSignal.timeout to avoid Windows Bun cleanup issue (libuv assertion)
+    const response = await fetch(`http://127.0.0.1:${port}/api/health`);
+    return response.ok;
   } catch (error) {
-    // Treat any error as port not in use (fail open)
-    logger.debug('SYSTEM', 'Port check failed, assuming port is free', { port }, error as Error);
+    // [ANTI-PATTERN IGNORED]: Health check polls every 500ms, logging would flood
     return false;
   }
 }

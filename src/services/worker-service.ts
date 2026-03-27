@@ -1019,13 +1019,7 @@ async function ensureWorkerStarted(port: number): Promise<boolean> {
       logger.info('SYSTEM', 'Worker is now healthy');
       return true;
     }
-    // Port is occupied but not by claude-mem (health check failed)
-    // Clear Windows cooldown to allow immediate retry, and provide helpful error message
-    clearWorkerSpawnAttempted();
-    logger.error('SYSTEM', 'Port is occupied by another process (not claude-mem)', {
-      port,
-      suggestion: 'Kill the process using this port, or change CLAUDE_MEM_WORKER_PORT in settings'
-    });
+    logger.error('SYSTEM', 'Port in use but worker not responding to health checks');
     return false;
   }
 

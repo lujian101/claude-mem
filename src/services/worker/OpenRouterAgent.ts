@@ -384,7 +384,7 @@ export class OpenRouterAgent {
       if (siteUrl) {
         headers['HTTP-Referer'] = siteUrl;
       } else {
-        headers['HTTP-Referer'] = 'https://github.com/thedotmack/claude-mem';
+        headers['HTTP-Referer'] = 'https://github.com/lujian101/claude-mem';
       }
       if (appName) {
         headers['X-Title'] = appName;

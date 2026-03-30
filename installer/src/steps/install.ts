@@ -6,7 +6,7 @@ import { join } from 'path';
 import { homedir, tmpdir } from 'os';
 import type { IDE } from './ide-selection.js';
 
-const MARKETPLACE_DIR = join(homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
+const MARKETPLACE_DIR = join(homedir(), '.claude', 'plugins', 'marketplaces', 'lujian101');
 const PLUGINS_DIR = join(homedir(), '.claude', 'plugins');
 const CLAUDE_SETTINGS_PATH = join(homedir(), '.claude', 'settings.json');
 
@@ -30,10 +30,10 @@ function registerMarketplace(): void {
   const knownMarketplacesPath = join(PLUGINS_DIR, 'known_marketplaces.json');
   const knownMarketplaces = readJsonFile(knownMarketplacesPath);
 
-  knownMarketplaces['thedotmack'] = {
+  knownMarketplaces['lujian101'] = {
     source: {
       source: 'github',
-      repo: 'thedotmack/claude-mem',
+      repo: 'lujian101/claude-mem',
     },
     installLocation: MARKETPLACE_DIR,
     lastUpdated: new Date().toISOString(),
@@ -51,10 +51,10 @@ function registerPlugin(version: string): void {
   if (!installedPlugins.version) installedPlugins.version = 2;
   if (!installedPlugins.plugins) installedPlugins.plugins = {};
 
-  const pluginCachePath = join(PLUGINS_DIR, 'cache', 'thedotmack', 'claude-mem', version);
+  const pluginCachePath = join(PLUGINS_DIR, 'cache', 'lujian101', 'claude-mem', version);
   const now = new Date().toISOString();
 
-  installedPlugins.plugins['claude-mem@thedotmack'] = [
+  installedPlugins.plugins['claude-mem@lujian101'] = [
     {
       scope: 'user',
       installPath: pluginCachePath,
@@ -78,7 +78,7 @@ function enablePluginInClaudeSettings(): void {
   const settings = readJsonFile(CLAUDE_SETTINGS_PATH);
 
   if (!settings.enabledPlugins) settings.enabledPlugins = {};
-  settings.enabledPlugins['claude-mem@thedotmack'] = true;
+  settings.enabledPlugins['claude-mem@lujian101'] = true;
 
   writeJsonFile(CLAUDE_SETTINGS_PATH, settings);
 }
@@ -101,7 +101,7 @@ export async function runInstallation(selectedIDEs: IDE[]): Promise<void> {
       task: async (message) => {
         message('Downloading latest release...');
         execSync(
-          `git clone --depth 1 https://github.com/thedotmack/claude-mem.git "${tempDir}"`,
+          `git clone --depth 1 https://github.com/lujian101/claude-mem.git "${tempDir}"`,
           { stdio: 'pipe' },
         );
         return `Repository cloned ${pc.green('OK')}`;

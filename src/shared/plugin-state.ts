@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const PLUGIN_SETTINGS_KEY = 'claude-mem@lujian101';
+const PLUGIN_SETTINGS_KEY = 'claude-mem@thedotmack';
 
 /**
  * Check if claude-mem is disabled in Claude Code's settings (#781).

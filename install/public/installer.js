@@ -1259,7 +1259,7 @@ async function runWelcome() {
   R2.info(`Version: 1.0.0`);
   R2.info(`Platform: ${process.platform} (${process.arch})`);
   const settingsExist = existsSync(expandHome("~/.claude-mem/settings.json"));
-  const pluginExist = existsSync(expandHome("~/.claude/plugins/marketplaces/lujian101/"));
+  const pluginExist = existsSync(expandHome("~/.claude/plugins/marketplaces/thedotmack/"));
   const alreadyInstalled = settingsExist && pluginExist;
   if (alreadyInstalled) {
     R2.warn("Existing claude-mem installation detected.");
@@ -1854,7 +1854,7 @@ import { execSync as execSync3 } from "child_process";
 import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, cpSync } from "fs";
 import { join as join3 } from "path";
 import { homedir as homedir3, tmpdir } from "os";
-var MARKETPLACE_DIR = join3(homedir3(), ".claude", "plugins", "marketplaces", "lujian101");
+var MARKETPLACE_DIR = join3(homedir3(), ".claude", "plugins", "marketplaces", "thedotmack");
 var PLUGINS_DIR = join3(homedir3(), ".claude", "plugins");
 var CLAUDE_SETTINGS_PATH = join3(homedir3(), ".claude", "settings.json");
 function ensureDir(directoryPath) {
@@ -1873,10 +1873,10 @@ function writeJsonFile(filepath, data) {
 function registerMarketplace() {
   const knownMarketplacesPath = join3(PLUGINS_DIR, "known_marketplaces.json");
   const knownMarketplaces = readJsonFile(knownMarketplacesPath);
-  knownMarketplaces["lujian101"] = {
+  knownMarketplaces["thedotmack"] = {
     source: {
       source: "github",
-      repo: "lujian101/claude-mem"
+      repo: "thedotmack/claude-mem"
     },
     installLocation: MARKETPLACE_DIR,
     lastUpdated: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1890,9 +1890,9 @@ function registerPlugin(version) {
   const installedPlugins = readJsonFile(installedPluginsPath);
   if (!installedPlugins.version) installedPlugins.version = 2;
   if (!installedPlugins.plugins) installedPlugins.plugins = {};
-  const pluginCachePath = join3(PLUGINS_DIR, "cache", "lujian101", "claude-mem", version);
+  const pluginCachePath = join3(PLUGINS_DIR, "cache", "thedotmack", "claude-mem", version);
   const now = (/* @__PURE__ */ new Date()).toISOString();
-  installedPlugins.plugins["claude-mem@lujian101"] = [
+  installedPlugins.plugins["claude-mem@thedotmack"] = [
     {
       scope: "user",
       installPath: pluginCachePath,
@@ -1911,7 +1911,7 @@ function registerPlugin(version) {
 function enablePluginInClaudeSettings() {
   const settings = readJsonFile(CLAUDE_SETTINGS_PATH);
   if (!settings.enabledPlugins) settings.enabledPlugins = {};
-  settings.enabledPlugins["claude-mem@lujian101"] = true;
+  settings.enabledPlugins["claude-mem@thedotmack"] = true;
   writeJsonFile(CLAUDE_SETTINGS_PATH, settings);
 }
 function getPluginVersion() {
@@ -1930,7 +1930,7 @@ async function runInstallation(selectedIDEs) {
       task: async (message) => {
         message("Downloading latest release...");
         execSync3(
-          `git clone --depth 1 https://github.com/lujian101/claude-mem.git "${tempDir}"`,
+          `git clone --depth 1 https://github.com/thedotmack/claude-mem.git "${tempDir}"`,
           { stdio: "pipe" }
         );
         return `Repository cloned ${import_picocolors6.default.green("OK")}`;
@@ -1989,7 +1989,7 @@ var import_picocolors7 = __toESM(require_picocolors(), 1);
 import { spawn } from "child_process";
 import { join as join4 } from "path";
 import { homedir as homedir4 } from "os";
-var MARKETPLACE_DIR2 = join4(homedir4(), ".claude", "plugins", "marketplaces", "lujian101");
+var MARKETPLACE_DIR2 = join4(homedir4(), ".claude", "plugins", "marketplaces", "thedotmack");
 var HEALTH_CHECK_INTERVAL_MS = 1e3;
 var HEALTH_CHECK_MAX_ATTEMPTS = 30;
 async function pollHealthEndpoint(port, maxAttempts = HEALTH_CHECK_MAX_ATTEMPTS) {

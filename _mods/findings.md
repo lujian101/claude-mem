@@ -301,3 +301,13 @@ Worker 崩溃 (bun.exe PID=19760)
 | `src/services/worker-service.ts` | GUARD 1 改用 `isWorkerProcessAlive()` |
 
 **局限**：只解决了 PID 回收误判问题。端口残留（进程死了但端口还在 LISTENING）是独立问题，需要方案 C（端口清理）来解决。
+
+## F7：Marketplace 安装文件行尾差异（CRLF vs LF）
+
+**发现时间**：2026-04-13
+**现象**：marketplace 安装目录的构建产物（.cjs）hash 与本地项目不同
+**原因**：`core.autocrlf=true` 导致 git checkout 时部分行被转成 CRLF，本地构建产物保持 LF
+**验证**：`diff --strip-trailing-cr` 确认内容完全一致，纯行尾差异
+**影响**：无，功能完全等价，不需要处理
+
+## F8：版本号不变 marketplace 不重新拉取文件

@@ -1,7 +1,7 @@
 {
   "name": "thedotmack",
   "owner": {
-    "name": "thedotmack"
+    "name": "Alex Newman"
   },
   "metadata": {
     "description": "Plugins by Alex Newman (thedotmack)",
@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "claude-mem",
-      "version": "10.6.3",
+      "version": "12.1.0",
       "source": "./plugin",
       "description": "Persistent memory system for Claude Code - context compression across sessions"
     }

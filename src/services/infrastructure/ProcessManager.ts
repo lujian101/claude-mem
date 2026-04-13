@@ -786,6 +786,65 @@ export function spawnDaemon(
 }
 
 /**
+ * Check if a process with the given PID is alive AND is a bun.exe process.
+ *
+ * On Windows, PID recycling means a dead worker's PID can be reused by
+ * an unrelated process (e.g., Edge, Chrome). The basic `process.kill(pid, 0)`
+ * check returns true for any live process, regardless of identity. This
+ * function adds a process name check to confirm it's actually bun.exe.
+ *
+ * On Unix, PID recycling is rare enough that we skip the name check for
+ * performance (spawning a subprocess per check is expensive on busy systems).
+ *
+ * Falls back to basic isProcessAlive if the name check fails (e.g., wmic
+ * not available, permission denied) — conservative approach to avoid false
+ * negatives that would trigger unnecessary respawns.
+ */
+export function isWorkerProcessAlive(pid: number): boolean {
+  // PID 0 is the Windows sentinel value — process was spawned but PID unknown
+  if (pid === 0) return true;
+
+  // Invalid PIDs are not alive
+  if (!Number.isInteger(pid) || pid < 0) return false;
+
+  // First: basic existence check
+  let pidExists = false;
+  try {
+    process.kill(pid, 0);
+    pidExists = true;
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    pidExists = code === 'EPERM';
+  }
+
+  if (!pidExists) return false;
+
+  // On non-Windows, basic check is sufficient
+  if (process.platform !== 'win32') return true;
+
+  // On Windows, verify the process is actually bun.exe (not a recycled PID)
+  try {
+    const output = execSync(
+      `wmic process where ProcessId=${pid} get Name /value`,
+      { timeout: HOOK_TIMEOUTS.POWERSHELL_COMMAND, encoding: 'utf-8', windowsHide: true }
+    );
+    // wmic output format: "Name=bun.exe"
+    const match = output.match(/Name\s*=\s*(.+)/i);
+    if (match) {
+      const processName = match[1].trim().toLowerCase();
+      // Accept bun.exe or bun (in case of future naming changes)
+      return processName === 'bun.exe' || processName === 'bun';
+    }
+    // No name found — process may have exited between kill(0) and wmic
+    return false;
+  } catch {
+    // wmic failed (not available, timeout, permission denied)
+    // Fall back to basic check — conservative to avoid false negatives
+    return true;
+  }
+}
+
+/**
  * Check if a process with the given PID is alive.
  *
  * Uses the process.kill(pid, 0) idiom: signal 0 doesn't send a signal,

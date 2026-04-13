@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import { logger } from '../utils/logger.js';
-import { getProcessRegistry, isPidAlive, type ManagedProcessInfo, type ProcessRegistry } from './process-registry.js';
+import { getProcessRegistry, isPidAlive, isWorkerPid, type ManagedProcessInfo, type ProcessRegistry } from './process-registry.js';
 import { runShutdownCascade } from './shutdown.js';
 import { startHealthChecker, stopHealthChecker } from './health-checker.js';
 
@@ -167,7 +167,7 @@ export function validateWorkerPidFile(options: ValidateWorkerPidOptions = {}): V
     return 'invalid';
   }
 
-  if (isPidAlive(pidInfo.pid)) {
+  if (isWorkerPid(pidInfo.pid)) {
     if (options.logAlive ?? true) {
       logger.info('SYSTEM', 'Worker already running (PID alive)', {
         existingPid: pidInfo.pid,
@@ -178,10 +178,15 @@ export function validateWorkerPidFile(options: ValidateWorkerPidOptions = {}): V
     return 'alive';
   }
 
-  logger.info('SYSTEM', 'Removing stale PID file (worker process is dead)', {
+  // Log whether the PID exists at all (recycled) or is truly dead
+  const pidExists = isPidAlive(pidInfo.pid);
+  logger.info('SYSTEM', pidExists
+    ? 'Removing stale PID file (PID exists but is not a worker process — recycled PID)'
+    : 'Removing stale PID file (worker process is dead)', {
     pid: pidInfo.pid,
     port: pidInfo.port,
-    startedAt: pidInfo.startedAt
+    startedAt: pidInfo.startedAt,
+    pidRecycled: pidExists
   });
   rmSync(pidFilePath, { force: true });
   return 'stale';

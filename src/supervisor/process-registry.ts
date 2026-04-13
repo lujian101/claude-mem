@@ -38,6 +38,40 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Check if a PID belongs to a bun process (not a recycled PID).
+ *
+ * On Windows, PID recycling is common — a dead worker's PID can be reused
+ * by an unrelated process (Edge, Chrome, etc.). `isPidAlive(pid)` returns
+ * true for ANY live process, so we need to verify the process name.
+ *
+ * On Unix, PID recycling is rare enough that we skip the name check.
+ *
+ * Falls back to `isPidAlive` if the name check fails (conservative).
+ */
+export function isWorkerPid(pid: number): boolean {
+  if (!isPidAlive(pid)) return false;
+  if (process.platform !== 'win32') return true;
+
+  // Windows: verify the process is actually bun.exe
+  try {
+    const { execSync } = require('child_process');
+    const output = execSync(
+      `wmic process where ProcessId=${pid} get Name /value`,
+      { timeout: 10000, encoding: 'utf-8', windowsHide: true }
+    );
+    const match = output.match(/Name\s*=\s*(.+)/i);
+    if (match) {
+      const name = match[1].trim().toLowerCase();
+      return name === 'bun.exe' || name === 'bun';
+    }
+    return false;
+  } catch {
+    // wmic not available or failed — fall back to basic check
+    return true;
+  }
+}
+
 export class ProcessRegistry {
   private readonly registryPath: string;
   private readonly entries = new Map<string, ManagedProcessInfo>();

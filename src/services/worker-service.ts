@@ -47,6 +47,7 @@ import {
   runOneTimeChromaMigration,
   cleanStalePidFile,
   isProcessAlive,
+  isWorkerProcessAlive,
   spawnDaemon,
   touchPidFile
 } from './infrastructure/ProcessManager.js';
@@ -1190,9 +1191,10 @@ async function main() {
     case '--daemon':
     default: {
       // GUARD 1: Refuse to start if another worker is already alive (PID check).
-      // Instant check (kill -0) — no HTTP dependency.
+      // Uses isWorkerProcessAlive to verify PID is actually bun.exe, not a
+      // recycled PID (Windows PID recycling can cause false positives).
       const existingPidInfo = readPidFile();
-      if (existingPidInfo && isProcessAlive(existingPidInfo.pid)) {
+      if (existingPidInfo && isWorkerProcessAlive(existingPidInfo.pid)) {
         logger.info('SYSTEM', 'Worker already running (PID alive), refusing to start duplicate', {
           existingPid: existingPidInfo.pid,
           existingPort: existingPidInfo.port,

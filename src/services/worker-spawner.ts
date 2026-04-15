@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, writeFileSync, unlinkSync, statSync } from 'fs';
 import { logger } from '../utils/logger.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
+import { USER_SETTINGS_PATH } from '../shared/paths.js';
 import {
   cleanStalePidFile,
   cleanupZombiePort,
@@ -109,9 +110,14 @@ export async function ensureWorkerStarted(
 ): Promise<boolean> {
   // Respect manual management mode — if auto-start is disabled, never spawn
   // (unless force=true, which means an explicit CLI command from the user)
-  if (!force && SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_AUTO_START') === 'false') {
-    logger.info('SYSTEM', 'Worker auto-start disabled by CLAUDE_MEM_WORKER_AUTO_START=false');
-    return false;
+  // MUST use loadFromFile() not get() — get() only checks env vars and defaults,
+  // ignoring settings.json entirely, so user configuration has no effect.
+  if (!force) {
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    if (settings.CLAUDE_MEM_WORKER_AUTO_START === 'false') {
+      logger.info('SYSTEM', 'Worker auto-start disabled by CLAUDE_MEM_WORKER_AUTO_START=false');
+      return false;
+    }
   }
 
   // Defensive guard: validate the worker script path before any health check

@@ -4,7 +4,7 @@ import { exec } from "child_process";
 import { logger } from "../utils/logger.js";
 import { HOOK_TIMEOUTS, getTimeout } from "./hook-constants.js";
 import { SettingsDefaultsManager } from "./SettingsDefaultsManager.js";
-import { MARKETPLACE_ROOT } from "./paths.js";
+import { MARKETPLACE_ROOT, USER_SETTINGS_PATH } from "./paths.js";
 
 // Named constants for health checks
 // Allow env var override for users on slow systems (e.g., CLAUDE_MEM_HEALTH_TIMEOUT_MS=10000)
@@ -229,7 +229,9 @@ export async function ensureWorkerRunning(): Promise<boolean> {
   logger.warn('SYSTEM', 'Worker not healthy, hook will proceed gracefully');
 
   // When auto-start is disabled, show a toast so the user knows to start manually
-  if (SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_AUTO_START') === 'false') {
+  // MUST use loadFromFile() not get() — get() ignores settings.json
+  const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+  if (settings.CLAUDE_MEM_WORKER_AUTO_START === 'false') {
     showWorkerDownToast();
   }
 

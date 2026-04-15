@@ -310,4 +310,84 @@ Worker 崩溃 (bun.exe PID=19760)
 **验证**：`diff --strip-trailing-cr` 确认内容完全一致，纯行尾差异
 **影响**：无，功能完全等价，不需要处理
 
-## F8：版本号不变 marketplace 不重新拉取文件
+## F8：Bun/Windows fetch() 阻塞事件循环（2026-04-15 关键发现）
+
+**严重程度**：🔴 高 — 导致对话卡死 20+ 分钟
+
+### 根因
+
+Bun 在 Windows 上，当 `fetch()` 连接的目标端口没有进程监听时，底层 TCP connect 通过 IOCP 发出后**没有正确返回事件给 libuv**：
+
+1. `fetch()` 底层 TCP 操作阻塞了 libuv 事件循环
+2. `setTimeout` 的回调永远排不上队（因为事件循环被卡住了）
+3. Promise.race 的两个分支都挂了
+4. Hook 进程永久等待
+
+### 受影响的代码路径
+
+| 文件 | 函数 | 问题 |
+|------|------|------|
+| `worker-utils.ts` | `fetchWithTimeout()` | Promise.race 的 setTimeout 无法触发 |
+| `HealthMonitor.ts:27` | `httpRequestToWorker()` | **裸 fetch() 完全无超时** — 所有 CLI 命令卡死根源 |
+| `HealthMonitor.ts:54` | `isPortInUse()` Windows 分支 | **裸 fetch() 完全无超时** |
+| `HealthMonitor.ts:140` | `httpShutdown()` | **裸 fetch() 完全无超时** |
+
+### 为什么 safety timer 能兜底
+
+Safety timer 在 `fetch()` 调用**之前**就已注册到事件循环。只要 Bun 进程本身没死，timer 一定会触发（Bun 的事件循环是协作式的，timer 注册在 fetch 之前）。
+
+### 已实施修复
+
+| 修复 | 文件 | 效果 |
+|------|------|------|
+| 进程级 safety timer | `hook-command.ts` | hook 30s 硬上限，超时弹 Toast + exit(0) |
+| Toast 提醒 | `worker-utils.ts` | 手动模式下 worker 不可达弹通知 |
+| worker-cli.js 脚本 | `~/.claude-mem/worker-*.bat` | 用 process.kill(pid,0) 而非 HTTP，不卡 |
+
+### 未修复（下一步）
+
+- `HealthMonitor.ts` 的 3 个裸 fetch() 调用 — 需要加超时（全面修复方案）
+
+## F9：worker-cli.js vs worker-service.cjs CLI（2026-04-15）
+
+### 关键差异
+
+| 维度 | worker-service.cjs CLI | worker-cli.js |
+|------|----------------------|---------------|
+| status 检查 | `isPortInUse()` → 裸 fetch → **卡死** | `process.kill(pid, 0)` → 系统调用 → **秒返** |
+| start 方式 | `ensureWorkerStarted()` → 完整 spawn 流程 | `ProcessManager.start()` → PowerShell Start-Process |
+| stop 方式 | `httpShutdown()` → 裸 fetch → 可能卡 | HTTP + AbortSignal.timeout + taskkill 兜底 |
+| 适合场景 | worker 自身的 CLI 入口 | 外部管理脚本调用 |
+
+### 路径
+
+- worker-service.cjs: `cache/thedotmack/claude-mem/12.1.0/scripts/worker-service.cjs`
+- worker-cli.js: `cache/thedotmack/claude-mem/12.1.0/scripts/worker-cli.js`
+
+### 结论
+
+**管理脚本必须用 worker-cli.js**，worker-service.cjs 的 CLI 会因为裸 fetch 在 Bun/Windows 上卡死。
+
+## F10：Worker 启动失败（2026-04-15 待排查）
+
+### 现象
+
+`bun worker-cli.js start` 后 worker 立即退出：
+
+```
+[wrapper] Spawning inner worker: .../worker-service.cjs
+[wrapper] Inner exited with code=0, signal=null
+[wrapper] Inner exited unexpectedly, wrapper exiting
+```
+
+### 可能原因
+
+1. **isPluginDisabledInClaudeSettings()** — worker-service.cjs main() 无参数时检查此函数，可能返回 true
+2. **端口残留** — netstat 显示 37777 有 5 个 FIN_WAIT_2 连接
+3. **wrapper 路径** — worker-cli.js 硬编码 marketplace 路径而非 cache 路径
+
+### 待排查
+
+- [ ] 检查 Claude settings.json 里 claude-mem 是否被禁用
+- [ ] 检查 FIN_WAIT_2 连接是否阻止 listen()
+- [ ] 检查 wrapper 传递的参数和环境变量

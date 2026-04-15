@@ -1059,7 +1059,7 @@ async function main() {
 
   switch (command) {
     case 'start': {
-      const success = await ensureWorkerStarted(port);
+      const success = await ensureWorkerStarted(port, __filename, true);
       if (success) {
         exitWithStatus('ready');
       } else {

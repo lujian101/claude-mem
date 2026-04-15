@@ -102,10 +102,12 @@ function clearWorkerSpawnAttempted(): void {
  */
 export async function ensureWorkerStarted(
   port: number,
-  workerScriptPath: string
+  workerScriptPath: string,
+  force: boolean = false
 ): Promise<boolean> {
   // Respect manual management mode — if auto-start is disabled, never spawn
-  if (SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_AUTO_START') === 'false') {
+  // (unless force=true, which means an explicit CLI command from the user)
+  if (!force && SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_AUTO_START') === 'false') {
     logger.info('SYSTEM', 'Worker auto-start disabled by CLAUDE_MEM_WORKER_AUTO_START=false');
     return false;
   }

@@ -51,30 +51,65 @@
 - [x] 6.4 合并 upstream/main（162 commits，6 个冲突已解决）
 - [x] 6.5 编译成功，推送到 origin/main
 
-## 阶段七：集成测试 🔄 进行中
+## 阶段七：Worker 稳定性修复 & 手动管理模式 ✅ 已完成
 
-- [x] 7.0 前置检查
-  - [x] 确认版本号不变导致 marketplace 未拉取新构建产物
-  - [x] 手动同步 4 个文件到安装目录：worker-service.cjs, mcp-server.cjs, context-generator.cjs, viewer-bundle.js
-  - [x] 重启电脑清理僵尸端口/进程
-  - [x] 安装目录与本地项目全部一致（排除 package.json 排序差异）
-- [ ] 7.1 Worker 启动测试 — hook 触发后 worker 能否正常启动并监听 37777
-- [ ] 7.2 PID 验证测试 — kill bun 进程后，新 hook 能否正确检测并重启
-- [ ] 7.3 端口残留场景 — 验证修复后是否还有僵尸 LISTENING 状态
-- [ ] 7.4 SessionStart hook — 上下文注入是否正常
-- [ ] 7.5 PostToolUse hook — 工具调用捕获是否正常
-- [ ] 7.6 Viewer UI — http://localhost:37777 是否能正常访问
-- [ ] 7.7 管理技能创建（/sync-upstream, /build-release, /analyze-upstream）
+- [x] 7.1 Worker 启动机制分析
+  - [x] 完整梳理 hook → ensureWorkerRunning → worker spawner 链路
+  - [x] 定位卡死根因：Bun/Windows fetch() 阻塞事件循环，fetchWithTimeout 的 setTimeout 无法触发
+- [x] 7.2 Hook 安全网（进程级超时）
+  - [x] hook-command.ts 加 safety timer + Windows Toast 通知
+  - [x] 超时时间可配置（CLAUDE_MEM_HOOK_TOTAL_TIMEOUT_MS，默认 30s）
+- [x] 7.3 手动 Worker 管理模式
+  - [x] SettingsDefaultsManager 新增 CLAUDE_MEM_WORKER_AUTO_START（默认 true）
+  - [x] worker-spawner.ts ensureWorkerStarted() 检查配置，false 时跳过 spawn
+  - [x] worker-utils.ts 在手动模式 + worker 不可达时弹 Toast 提醒（5 分钟冷却）
+- [x] 7.4 网页端 Base URL 修复
+  - [x] SettingsRoutes.ts settingKeys 加 CLAUDE_MEM_OPENROUTER_BASE_URL
+  - [x] useSettings.ts 加载时读取该字段
+- [x] 7.5 管理脚本
+  - [x] 创建 worker-start.bat / worker-stop.bat / worker-status.bat（~/.claude-mem/）
+  - [x] 修复：改用 worker-cli.js 而非 worker-service.cjs（前者不走 HTTP 不卡死）
+- [x] 7.6 settings.json 更新
+  - [x] 已添加 WORKER_AUTO_START=false, HOOK_TOTAL_TIMEOUT_MS=10000
+
+## 阶段八：待解决问题 🔄 下一步
+
+- [ ] 8.1 Worker 启动失败修复
+  - worker-cli.js start 后 worker 立即退出 (exit code 0)
+  - 日志显示 wrapper 启动 worker-service.cjs 后 inner exited unexpectedly
+  - 可能原因：isPluginDisabledInClaudeSettings() 拦截、端口残留、CLI 参数缺失
+  - **优先级：高** — 手动管理模式的核心依赖
+
+- [ ] 8.2 HealthMonitor 超时修复（全面修复方案）
+  - HealthMonitor.ts httpRequestToWorker() 裸 fetch() 无超时 — **所有 CLI 命令的卡死根源**
+  - isPortInUse() Windows 分支裸 fetch() 无超时
+  - httpShutdown() 裸 fetch() 无超时
+  - **优先级：高** — 彻底根治卡死问题
+
+- [ ] 8.3 集成测试验收
+  - [ ] Worker 手动启动/停止/状态查询完整流程
+  - [ ] 手动模式下 hook 降级 + Toast 提醒是否正常
+  - [ ] Hook 安全超时是否正常触发
+  - [ ] Viewer UI Base URL 显示是否正确
+
+- [ ] 8.4 Windows 同步脚本
+  - 替代 rsync 的 Windows 原生方案（robocopy / xcopy）
+  - npm run sync-marketplace 的 Windows 兼容版本
+  - **优先级：中**
+
+- [ ] 8.5 构建发布流程文档
+  - [ ] bump version → build → sync → push 完整流程
+  - [ ] 版本号与 marketplace 更新机制的关系
 
 ---
 
 ## 当前状态
 
-**分支**：`main`（与远程同步）
+**分支**：`main`（与远程同步，commit 30d49729）
 **版本**：v12.1.0（与上游同步）
-**与上游差异**：9 个文件（5 个 OpenRouter 源码 + 4 个编译产物）+ `_mods/` 目录
-**当前任务**：集成测试（阶段七）
-**前置检查**：✅ 已完成 — 构建产物已手动同步到安装目录，僵尸进程已通过重启清除
+**与上游差异**：10 个文件 + `_mods/` 目录
+**当前任务**：阶段八 — Worker 启动修复 + HealthMonitor 超时修复 + 集成测试
+**配置状态**：WORKER_AUTO_START=false, HOOK_TOTAL_TIMEOUT_MS=10000
 
 ## 关键决策记录
 
@@ -85,3 +120,7 @@
 | 2026-04-13 | hooks.json 采用上游版本 | 上游新增了健康检查、file-context hook，先用着看 |
 | 2026-04-13 | 本地文档放入 `_mods/` | 下划线前缀避免与上游未来新增目录冲突 |
 | 2026-04-13 | 版本号不变 marketplace 不拉取新文件 | 需 bump version 或手动同步构建产物到安装目录 |
+| 2026-04-15 | 用 safety timer 而非修 fetchWithTimeout | Bun/Windows 下 fetch 阻塞事件循环，setTimeout 在 fetch 之前注册可兜底 |
+| 2026-04-15 | 手动管理模式而非引用计数 | Hook 无状态，引用计数难做对；手动管理简单可靠 |
+| 2026-04-15 | 管理脚本用 worker-cli.js | worker-service.cjs status 用裸 fetch 卡死，worker-cli.js 用 process.kill 不卡 |
+| 2026-04-15 | Windows Toast 通知而非日志标记 | 用户要求实时感知，Toast 最直观 |

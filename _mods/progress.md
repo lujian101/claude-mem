@@ -67,7 +67,32 @@
 - [ ] 端口残留清理（方案 C）— 进程死了但端口 LISTENING 残留
 - [ ] Hook 端超时优化（方案 B）— TCP 探活缩短僵尸端口场景的等待时间
 
-### 未完成
+### 2026-04-15 — Worker 稳定性修复 & 手动管理模式
+
+### 完成事项
+
+**阶段七：Worker 稳定性修复**
+- [x] 完整分析 Worker 启动机制（hook → ensureWorkerRunning → spawner）
+- [x] 定位卡死根因：Bun/Windows fetch() 阻塞事件循环，fetchWithTimeout 失效
+- [x] hook-command.ts 加进程级 safety timer（30s 可配置）+ Windows Toast 通知
+- [x] SettingsDefaultsManager 新增 CLAUDE_MEM_WORKER_AUTO_START + CLAUDE_MEM_HOOK_TOTAL_TIMEOUT_MS
+- [x] worker-spawner.ts 加 auto-start 配置守卫
+- [x] worker-utils.ts 加手动模式 Toast 提醒（5 分钟冷却）
+- [x] 修复网页端 OpenRouter Base URL 不保存/不显示（SettingsRoutes + useSettings）
+- [x] 创建 worker-start.bat / worker-stop.bat / worker-status.bat
+- [x] 修复脚本：改用 worker-cli.js（不走 HTTP 不卡死）
+- [x] settings.json 已更新：WORKER_AUTO_START=false, HOOK_TOTAL_TIMEOUT_MS=10000
+- [x] 编译成功，推送 GitHub（commit 30d49729）
+
+### 待处理
+
+- [ ] **Worker 启动失败修复** — worker-cli.js start 后 worker 立即退出 (exit 0)
+- [ ] **HealthMonitor 超时修复** — httpRequestToWorker / isPortInUse / httpShutdown 三个裸 fetch
+- [ ] **集成测试验收** — 手动启动/停止/状态 + Toast 提醒 + Hook 降级
+- [ ] **Windows 同步脚本** — 替代 rsync 的 robocopy/xcopy 方案
+- [ ] **构建发布流程文档** — bump → build → sync → push 完整流程
+
+### 未完成（历史遗留）
 
 - [ ] 管理技能创建（阶段七）
 - [ ] Windows 适配文档

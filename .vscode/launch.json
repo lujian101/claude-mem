@@ -1,0 +1,39 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "build-sync (interactive)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/_mods/build-sync.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "check-sync (check only)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/_mods/check-sync.py",
+      "args": ["--diff"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "check-sync (sync mode)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/_mods/check-sync.py",
+      "args": ["--sync", "--diff"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Python: Current File",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

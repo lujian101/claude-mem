@@ -24,6 +24,8 @@ import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 import {
   cleanStalePidFile,
+  cleanupZombiePort,
+  findPortHolderPid,
   getPlatformTimeout,
   removePidFile,
   spawnDaemon,
@@ -177,6 +179,27 @@ export async function ensureWorkerStarted(
     }
     logger.error('SYSTEM', 'Port in use but worker not responding to health checks');
     return false;
+  }
+
+  // Windows zombie port guard: even if isPortInUse() returned false (HTTP health
+  // check failed/timed out), the TCP port may still be bound at the OS level by
+  // a dead process. This happens when a worker crashes and Windows keeps the TCP
+  // socket in LISTENING state. netstat-based detection + process kill is the only
+  // reliable way to clean this up before attempting to spawn a new worker.
+  if (process.platform === 'win32') {
+    const portHolderPid = await findPortHolderPid(port);
+    if (portHolderPid !== null) {
+      logger.warn('SYSTEM', 'TCP port bound at OS level but HTTP health check failed — zombie port', {
+        port,
+        pid: portHolderPid,
+      });
+      const cleaned = await cleanupZombiePort(port);
+      if (!cleaned) {
+        logger.error('SYSTEM', 'Cannot start worker: zombie port cleanup failed', { port });
+        return false;
+      }
+      logger.info('SYSTEM', 'Zombie port cleaned up, proceeding to spawn');
+    }
   }
 
   // Windows: skip spawn if a recent attempt already failed (issue #921)

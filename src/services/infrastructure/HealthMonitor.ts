@@ -16,15 +16,32 @@ import { logger } from '../../utils/logger.js';
 import { MARKETPLACE_ROOT } from '../../shared/paths.js';
 
 /**
+ * Default timeout for individual HTTP requests to the worker (3 seconds).
+ * Short enough to keep health-check polling loops responsive, long enough
+ * for a healthy localhost worker to reply (< 100 ms).
+ *
+ * CRITICAL: On Bun/Windows, a bare fetch() to a zombie TCP socket (port
+ * LISTENING but owning process dead) blocks the event loop, which prevents
+ * setTimeout-based timeouts from firing.  AbortSignal.timeout() is the
+ * only reliable way to break out because it is handled by the networking
+ * layer, not the JS timer queue.
+ */
+const FETCH_TIMEOUT_MS = 3_000;
+
+/**
  * Make an HTTP request to the worker via TCP.
  * Returns { ok, statusCode, body } or throws on transport error.
  */
 async function httpRequestToWorker(
   port: number,
   endpointPath: string,
-  method: string = 'GET'
+  method: string = 'GET',
+  timeoutMs: number = FETCH_TIMEOUT_MS
 ): Promise<{ ok: boolean; statusCode: number; body: string }> {
-  const response = await fetch(`http://127.0.0.1:${port}${endpointPath}`, { method });
+  const response = await fetch(`http://127.0.0.1:${port}${endpointPath}`, {
+    method,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   // Gracefully handle cases where response body isn't available (e.g., test mocks)
   let body = '';
   try {
@@ -50,8 +67,14 @@ export async function isPortInUse(port: number): Promise<boolean> {
     // semantics differ (SO_REUSEADDR defaults, firewall prompts). The TOCTOU
     // race remains on Windows but is an accepted limitation — the atomic
     // socket approach would cause false positives or UAC popups.
+    //
+    // IMPORTANT: AbortSignal.timeout is mandatory here. A bare fetch() to a
+    // zombie TCP socket blocks the Bun event loop on Windows, making all
+    // setTimeout-based timeouts (including the outer polling loop) useless.
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/health`);
+      const response = await fetch(`http://127.0.0.1:${port}/api/health`, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       return response.ok;
     } catch {
       return false;

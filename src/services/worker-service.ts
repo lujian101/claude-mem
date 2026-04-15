@@ -1059,7 +1059,11 @@ async function main() {
 
   switch (command) {
     case 'start': {
-      const success = await ensureWorkerStarted(port, __filename, true);
+      // --force bypasses CLAUDE_MEM_WORKER_AUTO_START=false (for manual scripts).
+      // Without --force, the auto-start setting is respected, so hooks that call
+      // `worker-service.cjs start` won't bypass the user's manual-management mode.
+      const forceStart = process.argv.includes('--force');
+      const success = await ensureWorkerStarted(port, __filename, forceStart);
       if (success) {
         exitWithStatus('ready');
       } else {

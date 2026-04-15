@@ -945,3 +945,92 @@ export function createSignalHandler(
     }
   };
 }
+
+/**
+ * Find the PID holding a TCP port via netstat (Windows only).
+ * Returns the PID or null if the port is free or the platform isn't Windows.
+ *
+ * Uses `netstat -ano` which is a system command — never blocks the JS event loop.
+ * This is intentionally used instead of fetch() for zombie port detection because
+ * a zombie TCP socket will accept TCP handshakes but never respond to HTTP, causing
+ * fetch() to hang on Bun/Windows even with AbortSignal.timeout in some edge cases.
+ */
+export async function findPortHolderPid(port: number): Promise<number | null> {
+  if (process.platform !== 'win32') return null;
+
+  // SECURITY: Validate port to prevent command injection
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+
+  try {
+    const { stdout } = await execAsync(
+      `netstat -ano | findstr :${port} | findstr LISTENING`,
+      { timeout: HOOK_TIMEOUTS.POWERSHELL_COMMAND, windowsHide: true }
+    );
+    // Output format: "  TCP    127.0.0.1:37777        0.0.0.0:0              LISTENING       13908"
+    const match = stdout.trim().match(/(\d+)\s*$/);
+    if (match) {
+      const pid = parseInt(match[1], 10);
+      return Number.isInteger(pid) && pid > 0 ? pid : null;
+    }
+    return null;
+  } catch {
+    // netstat failed or no output — port is free
+    return null;
+  }
+}
+
+/**
+ * Kill the process holding a TCP port and wait for the port to be released.
+ *
+ * On Windows, when a worker process dies abnormally (crash, OOM, task manager kill),
+ * the TCP socket can remain in LISTENING state with a dead PID — a "zombie port".
+ * This prevents a new worker from binding to the same port. This function detects
+ * that situation, force-kills the holder (or its child processes), and waits.
+ *
+ * Returns true if the port is now free (or was already free), false if cleanup failed.
+ */
+export async function cleanupZombiePort(port: number): Promise<boolean> {
+  const pid = await findPortHolderPid(port);
+  if (pid === null) {
+    // No one holding the port at the TCP level
+    return true;
+  }
+
+  logger.warn('SYSTEM', 'Zombie port detected: TCP port held by process', { port, pid });
+
+  // Try to kill the process (and its children)
+  try {
+    // Kill children first (in case a child inherited the socket)
+    const children = await getChildProcesses(pid);
+    for (const childPid of children) {
+      try {
+        await forceKillProcess(childPid);
+      } catch {
+        // Child already dead — continue
+      }
+    }
+    // Kill the main process
+    await forceKillProcess(pid);
+  } catch {
+    // Process may already be dead — that's expected for zombie ports
+  }
+
+  // Wait for the OS to release the socket (up to 10 seconds)
+  const start = Date.now();
+  const MAX_WAIT_MS = 10_000;
+  while (Date.now() - start < MAX_WAIT_MS) {
+    const holderPid = await findPortHolderPid(port);
+    if (holderPid === null) {
+      logger.info('SYSTEM', 'Zombie port cleaned up', { port, previousPid: pid });
+      return true;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  logger.error('SYSTEM', 'Failed to release zombie port after killing holder', {
+    port,
+    killedPid: pid,
+    currentHolder: await findPortHolderPid(port),
+  });
+  return false;
+}

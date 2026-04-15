@@ -1,7 +1,9 @@
+import { exec } from 'child_process';
 import { readJsonFromStdin } from './stdin-reader.js';
 import { getPlatformAdapter } from './adapters/index.js';
 import { getEventHandler } from './handlers/index.js';
 import { HOOK_EXIT_CODES } from '../shared/hook-constants.js';
+import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 import { logger } from '../utils/logger.js';
 
 export interface HookCommandOptions {
@@ -66,6 +68,35 @@ export function isWorkerUnavailableError(error: unknown): boolean {
 }
 
 export async function hookCommand(platform: string, event: string, options: HookCommandOptions = {}): Promise<number> {
+  // Process-level safety net: prevent hook from hanging indefinitely
+  // when fetchWithTimeout fails to fire on Bun/Windows.
+  // Fire-and-forget a Windows toast so the user knows something is wrong.
+  let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+  if (!options.skipExit) {
+    const timeoutMs = (() => {
+      const val = parseInt(SettingsDefaultsManager.get('CLAUDE_MEM_HOOK_TOTAL_TIMEOUT_MS'), 10);
+      return Number.isFinite(val) && val >= 5000 && val <= 120000 ? val : 30_000;
+    })();
+    safetyTimer = setTimeout(() => {
+      logger.error('HOOK', `Hook total timeout exceeded (${timeoutMs}ms) — force exiting`, { event, platform });
+      if (process.platform === 'win32') {
+        const ps = Buffer.from(
+          `Add-Type -AssemblyName System.Windows.Forms;`
+          + `$n=New-Object System.Windows.Forms.NotifyIcon;`
+          + `$n.Icon=[System.Drawing.SystemIcons]::Warning;`
+          + `$n.BalloonTipTitle='Claude-Mem';`
+          + `$n.BalloonTipText='Hook stalled (${event}) — worker may be down';`
+          + `$n.Visible=$true;`
+          + `$n.ShowBalloonTip(5000);`
+          + `Start-Sleep 6;$n.Dispose()`,
+          'utf16le'
+        ).toString('base64');
+        exec(`powershell -NoProfile -NonInteractive -EncodedCommand ${ps}`);
+      }
+      process.exit(HOOK_EXIT_CODES.SUCCESS);
+    }, timeoutMs);
+  }
+
   // Suppress stderr in hook context — Claude Code shows stderr as error UI (#1181)
   // Exit 1: stderr shown to user. Exit 2: stderr fed to Claude for processing.
   // All diagnostics go to log file via logger; stderr must stay clean.
@@ -80,6 +111,7 @@ export async function hookCommand(platform: string, event: string, options: Hook
     const input = adapter.normalizeInput(rawInput);
     input.platform = platform;  // Inject platform for handler-level decisions
     const result = await handler.execute(input);
+    clearTimeout(safetyTimer);
     const output = adapter.formatOutput(result);
 
     console.log(JSON.stringify(output));

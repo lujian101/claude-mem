@@ -104,6 +104,12 @@ export async function ensureWorkerStarted(
   port: number,
   workerScriptPath: string
 ): Promise<boolean> {
+  // Respect manual management mode — if auto-start is disabled, never spawn
+  if (SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_AUTO_START') === 'false') {
+    logger.info('SYSTEM', 'Worker auto-start disabled by CLAUDE_MEM_WORKER_AUTO_START=false');
+    return false;
+  }
+
   // Defensive guard: validate the worker script path before any health check
   // or spawn attempt. Without this, an empty string or missing file just
   // surfaces as a low-signal child_process error from spawnDaemon. Callers

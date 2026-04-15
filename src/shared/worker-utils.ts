@@ -1,5 +1,6 @@
 import path from "path";
-import { readFileSync } from "fs";
+import { readFileSync, existsSync, statSync, writeFileSync } from "fs";
+import { exec } from "child_process";
 import { logger } from "../utils/logger.js";
 import { HOOK_TIMEOUTS, getTimeout } from "./hook-constants.js";
 import { SettingsDefaultsManager } from "./SettingsDefaultsManager.js";
@@ -226,5 +227,41 @@ export async function ensureWorkerRunning(): Promise<boolean> {
   // Port might be in use by something else, or worker not started
   // Return false but don't throw - let caller decide how to handle
   logger.warn('SYSTEM', 'Worker not healthy, hook will proceed gracefully');
+
+  // When auto-start is disabled, show a toast so the user knows to start manually
+  if (SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_AUTO_START') === 'false') {
+    showWorkerDownToast();
+  }
+
   return false;
+}
+
+// --- Worker-down toast notification (Windows only) ---
+const WORKER_TOAST_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes between toasts
+
+function showWorkerDownToast(): void {
+  if (process.platform !== 'win32') return;
+  const markerPath = path.join(SettingsDefaultsManager.get('CLAUDE_MEM_DATA_DIR'), '.last-worker-down-toast');
+  try {
+    // Cooldown: only show one toast per 5 minutes
+    if (existsSync(markerPath)) {
+      const elapsed = Date.now() - statSync(markerPath).mtimeMs;
+      if (elapsed < WORKER_TOAST_COOLDOWN_MS) return;
+    }
+    writeFileSync(markerPath, '', 'utf-8');
+    const ps = Buffer.from(
+      `Add-Type -AssemblyName System.Windows.Forms;`
+      + `$n=New-Object System.Windows.Forms.NotifyIcon;`
+      + `$n.Icon=[System.Drawing.SystemIcons]::Warning;`
+      + `$n.BalloonTipTitle='Claude-Mem';`
+      + `$n.BalloonTipText='Worker not running — use worker-start.bat to start';`
+      + `$n.Visible=$true;`
+      + `$n.ShowBalloonTip(5000);`
+      + `Start-Sleep 6;$n.Dispose()`,
+      'utf16le'
+    ).toString('base64');
+    exec(`powershell -NoProfile -NonInteractive -EncodedCommand ${ps}`);
+  } catch {
+    // Toast failure must never block the hook
+  }
 }

@@ -266,27 +266,24 @@ export class Server {
     this.app.post('/api/admin/shutdown', requireLocalhost, async (_req: Request, res: Response) => {
       res.json({ status: 'shutting_down' });
 
-      // Handle Windows managed mode via IPC
-      const isWindowsManaged = process.platform === 'win32' &&
-        process.env.CLAUDE_MEM_MANAGED === 'true' &&
-        process.send;
+      // Always perform graceful shutdown first (close HTTP server, sessions, DB, child processes).
+      // Previously, managed mode skipped this and let the wrapper taskkill the process,
+      // which leaked the listening socket on Windows — zombie LISTENING port after process death.
+      setTimeout(async () => {
+        try {
+          await this.options.onShutdown();
+        } catch {
+          // Shutdown may partially fail; we still need to exit cleanly.
+        }
 
-      if (isWindowsManaged) {
-        logger.info('SYSTEM', 'Sending shutdown request to wrapper');
-        process.send!({ type: 'shutdown' });
-      } else {
-        // Unix or standalone Windows - handle shutdown ourselves
-        setTimeout(async () => {
-          try {
-            await this.options.onShutdown();
-          } finally {
-            // CRITICAL: Exit the process after shutdown completes (or fails).
-            // Without this, the daemon stays alive as a zombie — background tasks
-            // (backfill, reconnects) keep running and respawn chroma-mcp subprocesses.
-            process.exit(0);
-          }
-        }, 100);
-      }
+        if (process.env.CLAUDE_MEM_MANAGED === 'true' && process.send) {
+          // Managed mode: tell wrapper we're done so it can exit too.
+          // The wrapper will see the inner process has already exited and clean up.
+          process.send!({ type: 'shutdown' });
+        } else {
+          process.exit(0);
+        }
+      }, 100);
     });
 
     // Doctor endpoint - diagnostic view of supervisor, processes, and health

@@ -27,7 +27,7 @@ Claude Code's Bash tool runs commands with stdin **not** connected to a TTY. Whe
 All operations need to find worker-cli.js first. Use this bash pattern:
 
 ```bash
-WORKER_CLI=$(ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
+WORKER_CLI=$(\ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
 if [ -z "$WORKER_CLI" ]; then
   echo "ERROR: worker-cli.js not found in plugin cache."
   echo "Is the claude-mem plugin installed? Run /install in Claude Code first."
@@ -44,7 +44,7 @@ Parse the operation from the user's message or skill args. Default to `status` i
 ### start
 
 ```bash
-WORKER_CLI=$(ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
+WORKER_CLI=$(\ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
 if [ -z "$WORKER_CLI" ]; then echo "ERROR: worker-cli.js not found. Is the plugin installed?"; exit 1; fi
 CLAUDE_MEM_MANUAL_START=true bun "$WORKER_CLI" start
 ```
@@ -62,7 +62,7 @@ Report success or failure based on the health check response, not the CLI stdout
 ### stop
 
 ```bash
-WORKER_CLI=$(ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
+WORKER_CLI=$(\ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
 if [ -z "$WORKER_CLI" ]; then echo "ERROR: worker-cli.js not found."; exit 1; fi
 bun "$WORKER_CLI" stop
 ```
@@ -76,7 +76,7 @@ curl -s http://localhost:37777/api/health 2>/dev/null && echo "WARNING: Worker s
 ### restart
 
 ```bash
-WORKER_CLI=$(ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
+WORKER_CLI=$(\ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
 if [ -z "$WORKER_CLI" ]; then echo "ERROR: worker-cli.js not found."; exit 1; fi
 CLAUDE_MEM_MANUAL_START=true bun "$WORKER_CLI" restart
 ```

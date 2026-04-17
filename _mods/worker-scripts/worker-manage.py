@@ -8,6 +8,7 @@ Usage:
   python worker-manage.py status
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -43,7 +44,10 @@ def run_cli(action: str):
     print(f"Version: {cli.parent.parent.name}")
     print(f"CLI:     {cli}")
     print()
-    subprocess.run(["bun", str(cli), action])
+    env = os.environ.copy()
+    if action == "start":
+        env["CLAUDE_MEM_MANUAL_START"] = "true"
+    subprocess.run(["bun", str(cli), action], env=env)
     input("Press Enter to exit...")
 
 

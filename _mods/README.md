@@ -70,5 +70,7 @@
 | `README.md` | 本文件 — 修改点总览 |
 | `marketplace-mechanism.md` | Claude Code 插件市场机制解析 |
 | `upstream-sync-guide.md` | 上游同步操作手册 |
+| `upstream-merge-guard.py` | 合并安全网：快照/预览/合并/校验/对比 |
+| `merge-tui.py` | 交互式菜单界面，驱动 upstream-merge-guard.py |
 | `OPENROUTER_COMPAT_PATCH.md` | OpenRouter 兼容修改详细记录（迁移自根目录） |
 | `MANUAL_WORKER_MANAGEMENT.md` | Worker 手动管理记录（迁移自根目录） |

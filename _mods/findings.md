@@ -391,3 +391,273 @@ Safety timer 在 `fetch()` 调用**之前**就已注册到事件循环。只要 
 - [ ] 检查 Claude settings.json 里 claude-mem 是否被禁用
 - [ ] 检查 FIN_WAIT_2 连接是否阻止 listen()
 - [ ] 检查 wrapper 传递的参数和环境变量
+
+## F11：Managed 模式 Shutdown 跳过 Graceful Cleanup（2026-04-16 关键发现）
+
+**严重程度**：🔴 高 — 每次关闭 worker 都会产生僵尸端口
+
+### 根因
+
+`Server.ts:266` 的 `/api/admin/shutdown` 处理逻辑分两条路径：
+
+```js
+if (isWindowsManaged) {
+  process.send({ type: 'shutdown' });  // 只发 IPC，不做 cleanup
+} else {
+  setTimeout → performGracefulShutdown() → process.exit(0)
+}
+```
+
+Managed 模式（`CLAUDE_MEM_MANAGED=true`，wrapper 启动）直接发 IPC 让 wrapper 用 `taskkill /T /F` 硬杀进程，**完全跳过** `performGracefulShutdown()`。
+
+### 僵尸端口形成的完整因果链
+
+1. `POST /api/admin/shutdown` → managed 模式直接发 IPC 给 wrapper
+2. Wrapper 收到后 `taskkill /T /F` 硬杀 worker 进程
+3. `taskkill /T` **没有杀干净 Chroma 子进程树**（uvx → uv → chroma-mcp → python），变成孤儿
+4. 孤儿进程继承了 listening socket handle → OS 不释放端口 → 僵尸 LISTENING
+5. 即使孤儿进程最终死亡，如果 Edge 浏览器有 ESTABLISHED 连接吊着，CLOSE_WAIT/FIN_WAIT_2 会持续数分钟
+
+### 修复（已提交：43fe99d7）
+
+统一两条路径：**始终先执行 `performGracefulShutdown()`**（关 HTTP server、关连接、停子进程），完成后再决定是发 IPC 还是 `process.exit(0)`。
+
+## F12：Auto-Start 守卫不读 settings.json（2026-04-16 关键发现）
+
+**严重程度**：🔴 高 — `WORKER_AUTO_START=false` 完全无效
+
+### 根因
+
+`worker-spawner.ts:ensureWorkerStarted()` 和 `worker-utils.ts:ensureWorkerRunning()` 使用：
+
+```ts
+SettingsDefaultsManager.get('CLAUDE_MEM_WORKER_AUTO_START')
+```
+
+`get()` 的实现：
+
+```ts
+static get(key): string {
+    return process.env[key] ?? this.DEFAULTS[key];
+}
+```
+
+**只检查环境变量和硬编码默认值，根本不读 `~/.claude-mem/settings.json`**。
+
+而 `DEFAULTS.CLAUDE_MEM_WORKER_AUTO_START = 'true'`，所以永远返回 `'true'`。
+
+### 修复（已提交：676732c3）
+
+改用 `SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH)`，走完整优先级链：
+`env > settings file > default`
+
+### 影响范围
+
+`SettingsDefaultsManager.get()` 的其他调用点：
+- `CLAUDE_MEM_DATA_DIR` — 构建 settings 路径本身，不能循环依赖，用 `get()` 正确
+- `CLAUDE_MEM_HOOK_TOTAL_TIMEOUT_MS` — hook 最早初始化阶段，env 覆盖够用，用 `get()` 正确
+- `CLAUDE_MEM_WORKER_AUTO_START` — **唯一需要读 settings.json 的场景**，已修复
+
+## F13：taskkill /T 无法杀干净 Chroma 子进程树（2026-04-16 发现）
+
+**严重程度**：🟡 中 — 配合 F11 的修复，graceful shutdown 会先停 Chroma，此问题影响降低
+
+### 现象
+
+Worker 通过 `uvx` 启动 Chroma，形成 4 层进程树：
+
+```
+wrapper (PID 1560) [已死]
+  └─ uvx.exe (PID 9096)
+       └─ uv.exe (PID 12176)
+            └─ chroma-mcp.exe (PID 22384)
+                 └─ python.exe (PID 22408)
+                      └─ python.exe (PID 22424)
+```
+
+Wrapper 执行 `taskkill /PID <worker> /T /F` 后，这整条 Chroma 链变成孤儿，未被杀掉。这些进程可能继承了 listening socket handle，阻止 OS 释放端口 37777。
+
+### 影响
+
+- 即使 worker 进程已死，孤儿 Chroma 进程保持 socket handle 活着
+- 杀掉所有孤儿后，端口在 3 秒内释放（实测确认）
+
+### 缓解
+
+F11 的修复（先 graceful shutdown 再 IPC）会在 wrapper taskkill 之前关闭 Chroma 连接（`performGracefulShutdown` Step 4: `chromaMcpManager.stop()`），大幅降低孤儿进程概率。但 wrapper 的 `d()` 函数仍应改进进程树遍历可靠性。
+
+## F14：Cache 目录未同步导致修复无效（2026-04-17 发现）
+
+**严重程度**：🔴 高 — 所有本地修复都没生效
+
+### 根因
+
+用户在项目源码中做了多个修复（F11-F13），编译后的 `worker-service.cjs` 也已更新到 `plugin/scripts/`，但 **从未同步到 Claude Code 实际运行的两个目录**：
+
+- `~/.claude/plugins/cache/thedotmack/claude-mem/12.1.0/scripts/` — hooks 调用路径
+- `~/.claude/plugins/marketplaces/thedotmack/plugin/scripts/` — worker-cli.js/wrapper 调用路径
+
+两个目录都还是旧版 `worker-service.cjs`，所有修复（auto-start 守卫读 settings.json、graceful shutdown、僵尸端口清理、HealthMonitor 超时）完全无效。
+
+### 影响范围
+
+| 修复 | 状态 |
+|------|------|
+| F11: managed shutdown graceful cleanup | 源码有，cache 无 |
+| F12: auto-start 守卫读 settings.json | 源码有，cache 无 |
+| F13: 僵尸端口 cleanupZombiePort | 源码有，cache 无 |
+| HealthMonitor AbortSignal 超时 | 源码有，cache 无 |
+
+### 教训
+
+**每次 build 后必须同步到 cache + marketplace 两个目录**。`build-sync.py` 应该自动处理。
+
+## F15：Worker PID 文件冲突 — wrapper PID vs inner worker PID（2026-04-17 关键发现）
+
+**严重程度**：🔴 高 — managed 模式下 worker 无法启动
+
+### 根因
+
+`worker-cli.js` 的 `ProcessManager.start()` 通过 PowerShell `Start-Process` 启动 wrapper，PowerShell 返回的是 **wrapper 进程的 PID**。`worker-cli.js` 立即将这个 PID 写入 `worker.pid` 文件。
+
+随后 wrapper 启动 inner worker（`worker-service.cjs`），inner worker 进入 `default` case 的 GUARD 1：
+
+```ts
+const existingPidInfo = readPidFile();
+if (existingPidInfo && isWorkerProcessAlive(existingPidInfo.pid)) {
+    process.exit(0);  // "Worker already running"
+}
+```
+
+PID 文件里存的是 **wrapper 的 PID**，而 wrapper 是 inner worker 的父进程，当然活着。Inner worker 误判为"已有 worker 在跑"，立即退出。
+
+同样的问题也存在于 `supervisor/index.ts:41-43`：
+
+```ts
+const pidStatus = validateWorkerPidFile({ logAlive: false });
+if (pidStatus === 'alive') {
+    throw new Error('Worker already running');
+}
+```
+
+### 修复（已实施）
+
+两处检查都在 managed 模式下跳过：
+
+1. `worker-service.ts` GUARD 1 — `if (!isManaged)` 包裹
+2. `supervisor/index.ts` start() — `if (CLAUDE_MEM_MANAGED !== 'true')` 包裹
+
+**文件**：`src/services/worker-service.ts`、`src/supervisor/index.ts`
+
+## F16：isPluginDisabledInClaudeSettings 阻止手动管理工具启动（2026-04-17 发现）
+
+**严重程度**：🟡 中 — 插件禁用时无法通过管理脚本手动启动 worker
+
+### 根因
+
+`worker-service.ts:1046` 的 disabled 检查拦截了所有 hook-initiated 命令（包括 `undefined`，即 wrapper 无参调用）。当 `enabledPlugins: {"claude-mem@thedotmack": false}` 时，手动管理脚本也无法启动 worker。
+
+### 修复（已实施）
+
+`worker-manage.py` 在 `start` 时注入 `CLAUDE_MEM_MANUAL_START=true` 环境变量。`worker-service.ts` 的检查改为：
+
+```ts
+if (...&& isPluginDisabledInClaudeSettings()
+    && process.env.CLAUDE_MEM_MANUAL_START !== 'true') {
+    process.exit(0);
+}
+```
+
+环境变量穿透链路：Python subprocess → bun → PowerShell Start-Process → wrapper → inner worker（实测验证成功）。
+
+**文件**：`~/.claude-mem/worker-manage.py`、`src/services/worker-service.ts`
+
+## F17：performGracefulShutdown 被 catch 吞异常导致 Chroma 未关闭（2026-04-17 关键发现）
+
+**严重程度**：🔴 高 — 每次关闭 worker 都会产生僵尸端口
+
+### 根因
+
+`Server.ts:266-287` 的 shutdown 路由：
+
+```ts
+setTimeout(async () => {
+    try {
+        await this.options.onShutdown();  // performGracefulShutdown
+    } catch {
+        // Shutdown may partially fail; we still need to exit cleanly.
+        // ← 异常被静默吞掉！
+    }
+    if (process.env.CLAUDE_MEM_MANAGED === 'true' && process.send) {
+        process.send!({ type: 'shutdown' });  // 立即发 IPC
+    }
+}, 100);
+```
+
+`performGracefulShutdown` 的 STEP 1 (`closeHttpServer`) 在 Bun/Windows 上可能抛异常：
+- `server.closeAllConnections()` — Bun API 兼容性问题
+- `server.close()` + Windows delay
+
+异常被 catch 吞掉后，STEP 2-6（包括 **STEP 4: Chroma MCP stop**）全部跳过。接着 IPC 发给 wrapper，wrapper taskkill 杀进程 → Chroma 子进程变孤儿 → 继承 socket handle → 僵尸 LISTENING 端口。
+
+### 日志证据
+
+```
+[12:10:07.040] Shutdown initiated                    ← STEP 1 开始
+[04:10:07.585] shutdown requested by inner           ← IPC 已发（545ms 后）
+[04:10:07.830] taskkill completed                    ← wrapper 杀进程
+```
+
+STEP 1 在 Windows 上需要 1000ms（两个 500ms delay），但只过了 545ms 就发了 IPC，说明异常提前终止了 shutdown。
+
+### 推荐修复方向
+
+1. **A) 修 shutdown**：给 catch 加错误日志，修复 `closeHttpServer` 在 Bun 上的兼容性，确保每个 STEP 独立 try/catch
+2. **B) 修 wrapper**：让 wrapper 在 taskkill 后额外查找并清理 Chroma 子进程树（更健壮的兜底）
+3. **C) 两者都做**：A 修根因 + B 兜底
+
+## F18：worker-manage.py subprocess.run 未传 env 参数（2026-04-17 关键发现）
+
+**严重程度**：🔴 高 — 手动管理脚本完全无法启动 worker
+
+### 现象
+
+`worker-start.bat` 调用 `worker-manage.py start`，输出：
+
+```
+Failed to start: Process died during startup
+```
+
+Wrapper 日志显示 inner worker 立即 exit(0)。
+
+### 排查过程
+
+1. 直接用 `bun worker-cli.js start` 启动成功 → 问题在 Python 调用层
+2. 逐步缩小：Python `-c` 内联代码成功，Python 文件脚本失败
+3. 创建多版本文逐步对比，锁定差异在 `subprocess.run` 参数
+4. 注入 preload debug 脚本到 marketplace worker-service.cjs，确认 inner worker 收到 `MANUAL_START="undefined"`
+
+### 根因
+
+`worker-manage.py` 设置了 `env["CLAUDE_MEM_MANUAL_START"] = "true"`，但调用时：
+
+```python
+# 修复前 — env 从未传给子进程
+subprocess.run(["bun", str(cli), action])
+
+# 修复后
+subprocess.run(["bun", str(cli), action], env=env)
+```
+
+没有 `env=env`，Python 的 `subprocess.run` 使用默认的 `os.environ`，不包含新添加的变量。
+
+### 排查方法论总结
+
+Env 传递问题排查黄金法则：**在目标进程内部直接观测**。外部测试（bash 直接设 env）可能绕过问题路径。本次通过注入 preload 脚本到 marketplace 的 worker-service.cjs 才最终定位到 env 丢失。
+
+**Env 传递全链路**：Python `env=` → bun `process.env` → `spawnSync` 继承 → PowerShell 继承 → `Start-Process` 继承 → wrapper `...process.env` 展开 → inner worker `process.env`
+
+### 修复
+
+- `worker-manage.py`：添加 `import os` + `subprocess.run(..., env=env)`
+- 已验证：`cmd.exe → python → worker-manage.py start` 完整路径通过

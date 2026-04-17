@@ -4,34 +4,36 @@
 
 ---
 
-## 快速流程
+## 快速流程（使用 merge-guard 脚本）
 
 ```bash
-# 1. 拉取上游最新
-git fetch upstream
+# 1. 快照当前状态（创建 tag + 文件哈希清单）
+python _mods/upstream-merge-guard.py snapshot
 
-# 2. 查看更新内容
-git log HEAD..upstream/main --oneline
+# 2. 预览上游变更
+python _mods/upstream-merge-guard.py preview
 
-# 3. 检查冲突热区
-git diff HEAD..upstream/main -- src/services/worker/OpenRouterAgent.ts src/shared/SettingsDefaultsManager.ts
+# 3. 执行合并
+python _mods/upstream-merge-guard.py merge
 
-# 4. 合并（应能 fast-forward）
-git merge upstream/main
+# 4. 校验本地修改是否完整（核心步骤！）
+python _mods/upstream-merge-guard.py verify
 
-# 5. 如有冲突，参考下方冲突解决指引
+# 5. 如有问题，查看详细 diff
+python _mods/upstream-merge-guard.py diff
 
-# 6. 重新构建
-npm run build
-
-# 7. 同步到本地 marketplace
+# 6. 确认无误后，构建 + 同步
 npm run build-and-sync
 
-# 8. 验证 worker 运行
+# 7. 验证 worker
 curl http://localhost:37777/health
 
-# 9. 推送到 fork
+# 8. 推送到 fork
 git push origin main
+
+# 9. 清理快照（可选）
+rm _mods/.merge-snapshot.json
+git tag -d pre-merge-*
 ```
 
 ## 冲突解决指引

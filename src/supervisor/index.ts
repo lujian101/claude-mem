@@ -38,9 +38,14 @@ class Supervisor {
     if (this.started) return;
 
     this.registry.initialize();
-    const pidStatus = validateWorkerPidFile({ logAlive: false });
-    if (pidStatus === 'alive') {
-      throw new Error('Worker already running');
+    // In managed mode (wrapper), worker-cli.js writes the wrapper's PID to the
+    // PID file before spawning the inner worker. The wrapper is our parent, so
+    // validateWorkerPidFile would see it as "alive" and throw — skip the check.
+    if (process.env.CLAUDE_MEM_MANAGED !== 'true') {
+      const pidStatus = validateWorkerPidFile({ logAlive: false });
+      if (pidStatus === 'alive') {
+        throw new Error('Worker already running');
+      }
     }
 
     this.started = true;

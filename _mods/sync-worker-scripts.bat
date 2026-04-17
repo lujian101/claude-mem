@@ -21,6 +21,6 @@ for %%F in ("%SRC%\*") do (
 )
 
 echo.
-echo  Done. Synced !COUNT! files.
+echo  Done. Synced %COUNT% files.
 echo.
 pause

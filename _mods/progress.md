@@ -98,3 +98,81 @@
 - [ ] Windows 适配文档
 - [ ] .bat 脚本重写（当前有已知问题）
 - [ ] 构建发布流程详细文档
+
+### 2026-04-16 — Worker 关键 Bug 修复
+
+**已完成**
+
+- [x] **F11：Managed 模式 Shutdown 跳过 Graceful Cleanup**
+  - 根因：Server.ts managed 路径直接 IPC → wrapper taskkill，跳过所有 cleanup
+  - 修复：统一两条路径，始终先 `performGracefulShutdown()` 再决定退出方式
+  - commit: 43fe99d7
+
+- [x] **F12：Auto-Start 守卫不读 settings.json**
+  - 根因：`SettingsDefaultsManager.get()` 只查 env + 默认值，不读 settings.json
+  - `WORKER_AUTO_START=false` 写在 settings.json 里完全无效
+  - 修复：改用 `loadFromFile(USER_SETTINGS_PATH)` 走完整优先级链
+  - commit: 676732c3
+
+- [x] **F13：Chroma 子进程树杀不干净导致僵尸端口**
+  - 根因：`taskkill /T /F` 无法杀完 uvx→uv→chroma-mcp→python 4 层进程树
+  - 孤儿进程继承 listening socket handle → 端口不释放
+  - 杀掉所有孤儿后 3 秒内端口释放（实测确认）
+  - F11 修复已缓解（先 graceful shutdown 停 Chroma 再 IPC）
+
+- [x] 8.2 僵尸端口修复（netstat 检测 + cleanupZombiePort）
+  - commit: 380668f6
+
+- [x] 8.3 HealthMonitor 超时修复（AbortSignal.timeout）
+  - commit: 380668f6
+
+**待处理**
+
+- [x] **同步编译产物到 cache + marketplace 两个目录**（F14 修复）
+  - 发现所有修复一直没同步到 Claude Code 实际运行目录
+  - cache: `~/.claude/plugins/cache/thedotmack/claude-mem/12.1.0/scripts/`
+  - marketplace: `~/.claude/plugins/marketplaces/thedotmack/plugin/scripts/`
+  - 已同步，三个位置（项目/cache/marketplace）一致
+
+- [ ] **Wrapper 进程树清理可靠性改进**（F13 后续）
+  - wrapper 的 `d()` 函数应改进 Windows 进程树遍历
+
+### 2026-04-17 — Worker 启动/关闭调试
+
+**已完成**
+
+- [x] **F14：Cache 目录未同步** — 发现所有修复从未同步到实际运行目录
+  - 每次 build 后必须同步到 cache + marketplace 两个目录
+- [x] **F15：Worker PID 文件冲突** — managed 模式下 wrapper PID 导致 GUARD 1 误判
+  - 修复：worker-service.ts GUARD 1 + supervisor/index.ts start() 在 managed 模式下跳过 PID 检查
+- [x] **F16：手动管理工具绕过 disabled 检查** — CLAUDE_MEM_MANUAL_START 环境变量
+  - worker-manage.py 注入 env var → 穿透 Python→bun→PowerShell→wrapper→inner worker
+  - 实测验证 env var 成功传递
+
+### 2026-04-17 — Worker 启动/关闭验证 & env 修复
+
+**已完成**
+
+- [x] **3 轮 start/stop/restart 循环测试** — 全部通过，零失败
+  - 每轮：start → 验证 health → stop → 验证端口释放 → restart → 验证
+  - PID 每次更新，端口每次干净释放，无僵尸进程
+
+- [x] **F18：worker-manage.py env 传递丢失**（关键发现）
+  - 现象：`worker-start.bat` 报 "Process died during startup"，wrapper 日志显示 inner worker exit=0
+  - 排查：注入 preload debug 脚本到 inner worker，发现 `MANUAL_START="undefined"`
+  - 根因：`worker-manage.py` 的 `subprocess.run(["bun", ...])` **没有传 `env=env` 参数**
+  - 虽然代码里 `env["CLAUDE_MEM_MANUAL_START"] = "true"` 但从不传给子进程
+  - 修复：添加 `env=env` 参数到 `subprocess.run()`
+  - **排查经验**：Env 传递问题需要逐层验证（Python→bun→PowerShell→wrapper→inner），用 preload 脚本注入是最直接的调试方法
+
+- [x] **TypeScript 编译错误修复**（5 类 10 处 Error）
+  - `logger.ts`：`'TRANSCRIPT'` 加入 Component 联合类型
+  - `worker-service.ts`：`ensureWorkerStarted` → `ensureWorkerStartedShared`（参数数量不匹配）
+  - `worker-service.ts`：`sseBroadcaster` private → public（兼容 WorkerRef 接口）
+  - `worker-service.ts`：`sanitizeEnv` 返回值加 `as Record<string, string>`
+  - `GracefulShutdown.ts`：`'SHUTDOWN'` → `'SYSTEM'`（不在 Component 类型里）
+
+**待处理（下次会话继续）**
+
+- [ ] 集成测试验收剩余项（8.5）— Viewer UI、build-sync.py
+- [ ] 构建发布流程文档（8.6）

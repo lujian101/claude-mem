@@ -143,7 +143,7 @@ export class WorkerService {
   // Service layer
   private dbManager: DatabaseManager;
   private sessionManager: SessionManager;
-  private sseBroadcaster: SSEBroadcaster;
+  public sseBroadcaster: SSEBroadcaster;
   private sdkAgent: SDKAgent;
   private geminiAgent: GeminiAgent;
   private openRouterAgent: OpenRouterAgent;
@@ -442,7 +442,7 @@ export class WorkerService {
       const transport = new StdioClientTransport({
         command: 'node',
         args: [mcpServerPath],
-        env: sanitizeEnv(process.env)
+        env: sanitizeEnv(process.env) as Record<string, string>
       });
 
       const MCP_INIT_TIMEOUT_MS = 300000;
@@ -1042,8 +1042,11 @@ async function main() {
 
   // Early exit if plugin is disabled in Claude Code settings (#781).
   // Only gate hook-initiated commands; CLI management (stop/status) still works.
+  // Manual start from worker-manage.py sets CLAUDE_MEM_MANUAL_START=true to bypass this check.
   const hookInitiatedCommands = ['start', 'hook', 'restart', '--daemon'];
-  if ((hookInitiatedCommands.includes(command) || command === undefined) && isPluginDisabledInClaudeSettings()) {
+  if ((hookInitiatedCommands.includes(command) || command === undefined)
+    && isPluginDisabledInClaudeSettings()
+    && process.env.CLAUDE_MEM_MANUAL_START !== 'true') {
     process.exit(0);
   }
 
@@ -1063,7 +1066,7 @@ async function main() {
       // Without --force, the auto-start setting is respected, so hooks that call
       // `worker-service.cjs start` won't bypass the user's manual-management mode.
       const forceStart = process.argv.includes('--force');
-      const success = await ensureWorkerStarted(port, __filename, forceStart);
+      const success = await ensureWorkerStartedShared(port, __filename, forceStart);
       if (success) {
         exitWithStatus('ready');
       } else {
@@ -1197,14 +1200,20 @@ async function main() {
       // GUARD 1: Refuse to start if another worker is already alive (PID check).
       // Uses isWorkerProcessAlive to verify PID is actually bun.exe, not a
       // recycled PID (Windows PID recycling can cause false positives).
-      const existingPidInfo = readPidFile();
-      if (existingPidInfo && isWorkerProcessAlive(existingPidInfo.pid)) {
-        logger.info('SYSTEM', 'Worker already running (PID alive), refusing to start duplicate', {
-          existingPid: existingPidInfo.pid,
-          existingPort: existingPidInfo.port,
-          startedAt: existingPidInfo.startedAt
-        });
-        process.exit(0);
+      // In managed mode (wrapper), worker-cli.js writes the wrapper's PID to the
+      // PID file before spawning the inner worker. The wrapper is our parent, so
+      // isWorkerProcessAlive would see it as "alive" and exit — skip the check.
+      const isManaged = process.env.CLAUDE_MEM_MANAGED === 'true';
+      if (!isManaged) {
+        const existingPidInfo = readPidFile();
+        if (existingPidInfo && isWorkerProcessAlive(existingPidInfo.pid)) {
+          logger.info('SYSTEM', 'Worker already running (PID alive), refusing to start duplicate', {
+            existingPid: existingPidInfo.pid,
+            existingPort: existingPidInfo.port,
+            startedAt: existingPidInfo.startedAt
+          });
+          process.exit(0);
+        }
       }
 
       // GUARD 2: Refuse to start if the port is already bound.

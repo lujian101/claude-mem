@@ -79,16 +79,15 @@
   - 修复：`ensureWorkerStarted` 加 `force` 参数，CLI `start` 传 `force=true`
   - commit: 7ae83401
 
-- [ ] 8.2 Worker 启动失败修复 — 僵尸端口拦截
-  - 根因：进程死后端口 37777 残留 LISTENING + CLOSE_WAIT，daemon GUARD 2 `isPortInUse()` 误判
-  - 方案：改造 `isPortInUse()` 区分"真监听"和"僵尸残留"
-  - **优先级：高** — 重启后仍可能复现（进程异常退出场景）
+- [x] 8.2 Worker 启动失败修复 — 僵尸端口拦截
+  - 新增 `findPortHolderPid()`（netstat）+ `cleanupZombiePort()`（杀持有者+等待释放）
+  - worker-spawner 集成 Windows 僵尸端口守卫
+  - commit: 380668f6
 
-- [ ] 8.3 HealthMonitor 超时修复（全面修复方案）
-  - HealthMonitor.ts httpRequestToWorker() 裸 fetch() 无超时 — **所有 CLI 命令的卡死根源**
-  - isPortInUse() Windows 分支裸 fetch() 无超时
-  - httpShutdown() 裸 fetch() 无超时
-  - **优先级：高** — 彻底根治卡死问题
+- [x] 8.3 HealthMonitor 超时修复
+  - 3 个裸 fetch() 全部加 `AbortSignal.timeout(3000)`
+  - httpRequestToWorker / isPortInUse / httpShutdown
+  - commit: 380668f6
 
 - [x] 8.4 Windows 同步脚本 & 工具链
   - [x] `_mods/check-sync.py` — 插件文件 diff/sync（MD5 + 时间戳 + 增量同步）
@@ -98,10 +97,37 @@
   - [x] `_mods/sync-worker-scripts.bat` — 一键同步 worker 脚本到 ~/.claude-mem/
   - [x] `.vscode/launch.json` — Python 调试配置
 
-- [ ] 8.5 集成测试验收
-  - [ ] Worker 手动启动/停止/状态查询完整流程
-  - [ ] 手动模式下 hook 降级 + Toast 提醒是否正常
-  - [ ] Hook 安全超时是否正常触发
+- [x] 8.7 Managed 模式 Shutdown 修复（新发现的关键 bug）
+  - 根因：managed 路径跳过 graceful cleanup，wrapper taskkill 留僵尸端口
+  - Chroma 子进程树杀不干净，继承 socket handle → 端口不释放
+  - 修复：统一路径，始终先 `performGracefulShutdown()` 再退出
+  - commit: 43fe99d7
+
+- [x] 8.8 Auto-Start 守卫修复（新发现的关键 bug）
+  - 根因：`SettingsDefaultsManager.get()` 不读 settings.json，只查 env+默认值
+  - 修复：改用 `loadFromFile(USER_SETTINGS_PATH)` 走完整优先级链
+  - commit: 676732c3
+
+- [x] 8.9 Worker 启动/关闭验证（3 轮 start/stop/restart 循环）
+  - managed 模式 PID 检查跳过（F15 修复）验证通过
+  - MANUAL_START 绕过 disabled guard（F16 修复）验证通过
+  - graceful shutdown 端口干净释放，3 轮零失败
+
+- [x] 8.10 worker-manage.py env 传递修复（F18）
+  - 根因：`subprocess.run()` 未传 `env=env`，MANUAL_START 丢失
+  - 修复：添加 `env=env` + `os` import，worker-start.bat 验证通过
+
+- [x] 8.11 TypeScript 编译错误修复
+  - `'TRANSCRIPT'` 加入 Component 联合类型（logger.ts）
+  - `ensureWorkerStarted` → `ensureWorkerStartedShared`（worker-service.ts）
+  - `sseBroadcaster` private → public（兼容 WorkerRef 接口）
+  - `sanitizeEnv` 加 `as Record<string, string>` 类型断言
+  - GracefulShutdown.ts `'SHUTDOWN'` → `'SYSTEM'`
+
+- [ ] 8.5 集成测试验收（部分完成）
+  - [x] Worker 手动启动/停止/状态查询完整流程（3 轮循环通过）
+  - [x] **新的 graceful shutdown 是否干净释放端口** — ✅
+  - [x] **WORKER_AUTO_START=false 是否真正阻止自动启动** — ✅
   - [ ] Viewer UI Base URL 显示是否正确
   - [ ] check-sync.py / build-sync.py 功能完整性
 
@@ -113,11 +139,14 @@
 
 ## 当前状态
 
-**分支**：`main`（ahead of origin by 1 commit, 7ae83401）
+**分支**：`main`
 **版本**：v12.1.0（与上游同步）
 **与上游差异**：10 个文件 + `_mods/` 目录 + `.vscode/`
-**当前任务**：阶段八 — 僵尸端口修复（8.2）→ HealthMonitor 超时（8.3）→ 集成测试（8.5）
-**配置状态**：WORKER_AUTO_START=false, HOOK_TOTAL_TIMEOUT_MS=10000
+**本次会话**：验证 F15/F16 修复通过（3 轮循环），修复 F18（worker-manage.py env 丢失），修复 TS 编译错误
+**编译产物状态**：项目/cache/marketplace 三处一致
+**配置状态**：WORKER_AUTO_START=false, HOOK_TOTAL_TIMEOUT_MS=10000, enabledPlugins=false
+**端口状态**：37777 空闲（手动管理模式）
+**下一步**：集成测试验收剩余项（8.5）→ 构建发布流程文档（8.6）
 
 ## 关键决策记录
 

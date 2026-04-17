@@ -89,6 +89,13 @@ Claude-mem is designed with a clean separation between open-source core function
 
 This architecture preserves the open-source nature of the project while enabling sustainable development through optional paid features.
 
+## Upstream Sync
+
+**Manual**: `_mods/upstream-sync-guide.md` — fork 同步流程、冲突处理、Windows 注意事项
+**Script**: `_mods/upstream-merge-guard.py` — snapshot / preview / merge / verify
+
+Key: compiled artifacts (`plugin/scripts/*.cjs`, `plugin/ui/viewer-bundle.js`) never need manual merge — `npm run build` regenerates them after source conflicts are resolved.
+
 ## Important
 
 No need to edit the changelog ever, it's generated automatically.

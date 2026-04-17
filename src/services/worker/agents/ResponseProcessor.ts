@@ -126,6 +126,10 @@ export async function processAgentResponse(
     memorySessionId: session.memorySessionId
   });
 
+  // Track whether a summary record was stored so the status endpoint can expose this
+  // to the Stop hook for silent-summary-loss detection (#1633)
+  session.lastSummaryStored = result.summaryId !== null;
+
   // CLAIM-CONFIRM: Now that storage succeeded, confirm all processing messages (delete from queue)
   // This is the critical step that prevents message loss on generator crash
   const pendingStore = sessionManager.getPendingMessageStore();
@@ -329,12 +333,12 @@ async function syncAndBroadcastSummary(
     id: result.summaryId,
     session_id: session.contentSessionId,
     platform_source: session.platformSource,
-    request: summary!.request,
-    investigated: summary!.investigated,
-    learned: summary!.learned,
-    completed: summary!.completed,
-    next_steps: summary!.next_steps,
-    notes: summary!.notes,
+    request: summaryForStore!.request,
+    investigated: summaryForStore!.investigated,
+    learned: summaryForStore!.learned,
+    completed: summaryForStore!.completed,
+    next_steps: summaryForStore!.next_steps,
+    notes: summaryForStore!.notes,
     project: session.project,
     prompt_number: session.lastPromptNumber,
     created_at_epoch: result.createdAtEpoch

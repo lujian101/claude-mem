@@ -67,6 +67,26 @@ export function isWorkerUnavailableError(error: unknown): boolean {
   return false;
 }
 
+async function executeHookPipeline(
+  adapter: ReturnType<typeof getPlatformAdapter>,
+  handler: ReturnType<typeof getEventHandler>,
+  platform: string,
+  options: HookCommandOptions
+): Promise<number> {
+  const rawInput = await readJsonFromStdin();
+  const input = adapter.normalizeInput(rawInput);
+  input.platform = platform;  // Inject platform for handler-level decisions
+  const result = await handler.execute(input);
+  const output = adapter.formatOutput(result);
+
+  console.log(JSON.stringify(output));
+  const exitCode = result.exitCode ?? HOOK_EXIT_CODES.SUCCESS;
+  if (!options.skipExit) {
+    process.exit(exitCode);
+  }
+  return exitCode;
+}
+
 export async function hookCommand(platform: string, event: string, options: HookCommandOptions = {}): Promise<number> {
   // Process-level safety net: prevent hook from hanging indefinitely
   // when fetchWithTimeout fails to fire on Bun/Windows.
@@ -103,23 +123,11 @@ export async function hookCommand(platform: string, event: string, options: Hook
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
   process.stderr.write = (() => true) as typeof process.stderr.write;
 
+  const adapter = getPlatformAdapter(platform);
+  const handler = getEventHandler(event);
+
   try {
-    const adapter = getPlatformAdapter(platform);
-    const handler = getEventHandler(event);
-
-    const rawInput = await readJsonFromStdin();
-    const input = adapter.normalizeInput(rawInput);
-    input.platform = platform;  // Inject platform for handler-level decisions
-    const result = await handler.execute(input);
-    clearTimeout(safetyTimer);
-    const output = adapter.formatOutput(result);
-
-    console.log(JSON.stringify(output));
-    const exitCode = result.exitCode ?? HOOK_EXIT_CODES.SUCCESS;
-    if (!options.skipExit) {
-      process.exit(exitCode);
-    }
-    return exitCode;
+    return await executeHookPipeline(adapter, handler, platform, options);
   } catch (error) {
     if (isWorkerUnavailableError(error)) {
       // Worker unavailable — degrade gracefully, don't block the user

@@ -396,6 +396,19 @@ export class OpenRouterAgent {
       }
     }
 
+    // Parse extra body params from settings (model-specific, e.g. thinking control)
+    let extraBody: Record<string, unknown> = {};
+    try {
+      const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+      if (settings.CLAUDE_MEM_OPENROUTER_EXTRA_BODY) {
+        extraBody = JSON.parse(settings.CLAUDE_MEM_OPENROUTER_EXTRA_BODY);
+      }
+    } catch (e) {
+      logger.warn('SDK', 'Failed to parse CLAUDE_MEM_OPENROUTER_EXTRA_BODY, ignoring', {
+        error: e instanceof Error ? e.message : String(e)
+      });
+    }
+
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers,
@@ -404,6 +417,7 @@ export class OpenRouterAgent {
         messages,
         temperature: 0.3,  // Lower temperature for structured extraction
         max_tokens: 4096,
+        ...extraBody,
       }),
     });
 

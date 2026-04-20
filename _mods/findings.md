@@ -661,3 +661,84 @@ Env 传递问题排查黄金法则：**在目标进程内部直接观测**。外
 
 - `worker-manage.py`：添加 `import os` + `subprocess.run(..., env=env)`
 - 已验证：`cmd.exe → python → worker-manage.py start` 完整路径通过
+
+## F19：Worker 路径不匹配 — skill 用 cache，实际跑 marketplace（2026-04-18 发现）
+
+**严重程度**：🟡 中 — worker-manage skill 找不到正确的 worker
+
+### 现象
+
+Worker health check 报告路径为 marketplace 目录：
+```
+workerPath: "C:\Users\lujian\.claude\plugins\marketplaces\thedotmack\plugin\scripts\worker-service.cjs"
+```
+但 worker-manage skill 查找的是 cache 目录。
+
+### 根因
+
+三方路径解析逻辑不一致：
+
+| 组件 | 查找逻辑 |
+|------|----------|
+| hooks.json（SessionStart 等） | `CLAUDE_PLUGIN_ROOT` → cache（最新版本） → marketplace（兜底） |
+| worker-cli.js | 硬编码 marketplace 目录 |
+| worker-manage skill（旧版） | 只查 cache 目录 |
+
+原始源码中 `MARKETPLACE_ROOT`（`paths.ts:62`）是唯一硬编码的插件路径，整个项目（worker-utils、BranchManager、HealthMonitor 等）都引用它。**cache 目录不在源码考虑范围内**。
+
+### hooks.json 的三级 fallback
+
+```bash
+_R="${CLAUDE_PLUGIN_ROOT}"                           # 1. Claude Code 传入
+[ -z "$_R" ] && _R=$(ls -dt .../cache/.../[0-9]*/ | head -1)  # 2. 最新 cache 版本
+[ -z "$_R" ] && _R=".../marketplaces/thedotmack/plugin"        # 3. 兜底
+```
+
+### 两个目录的角色
+
+| 目录 | 角色 | 管理者 |
+|------|------|--------|
+| `cache/thedotmack/claude-mem/[版本]/` | 版本化缓存，多版本共存，运行时首选 | Claude Code `/plugin` 命令 |
+| `marketplaces/thedotmack/plugin/` | 源码仓库，只读，版本切换 | Claude Code marketplace 机制 |
+
+### 修复
+
+**worker-manage SKILL.md 重写**：
+
+1. 去掉 worker-cli.js 依赖，直接调用 `worker-service.cjs`（跟 hooks 一致）
+2. 采用同样的三级 fallback 路径解析
+3. 多行格式，`\ls` 避免 alias 干扰
+4. start/restart 加 `--force` 绕过 auto-start 守卫
+5. stop 验证 curl 加 `--max-time 3`（之前裸 curl 卡 1+ 分钟）
+
+**验证**：stop/start 都通过，worker 路径从 marketplace 切换到 cache 目录。
+
+### 遗留
+
+源码层面的 `MARKETPLACE_ROOT` 统一为 cache 路径是更大的重构，暂不处理。Skill 层面已通过 fallback 逻辑兼容两个位置。
+
+## F20：Hook 超时行为验证 — Worker 关闭后的表现（2026-04-18 验证）
+
+### 测试结果
+
+关闭 worker 后连续对话多轮，无感知延迟，无卡顿。
+
+### 机制确认
+
+1. Hook 调用 `ensureWorkerRunning()` → 健康检查失败（ECONNREFUSED）
+2. auto-start=false → 跳过自动启动
+3. 返回 false → handler 返回空结果 → **快速失败，不卡**
+4. 首次触发弹 Windows BalloonTip toast（标记文件 `.last-worker-down-toast` 确认）
+5. 5 分钟冷却期内不重复弹
+
+### Toast 验证
+
+```
+.last-worker-down-toast Modify: 2026-04-18 01:54:22 → 3 minutes ago
+```
+
+Toast 确实触发了，但 Windows BalloonTip 5 秒自动消失，容易被忽略。
+
+### 结论
+
+Hook 超时 + Toast + 快速失败机制全部正常工作。

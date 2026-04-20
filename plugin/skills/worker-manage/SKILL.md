@@ -20,22 +20,34 @@ Trigger when users mention worker management:
 
 ## Important: Non-TTY Output
 
-Claude Code's Bash tool runs commands with stdin **not** connected to a TTY. When worker-cli.js detects non-TTY, it outputs `{"continue": true, "suppressOutput": true}` instead of human-readable text. This is normal hook protocol output — **ignore it**. Use exit code and HTTP health checks to determine success/failure.
+Claude Code's Bash tool runs commands with stdin **not** connected to a TTY. When worker-service.cjs detects non-TTY, it outputs `{"continue": true, "suppressOutput": true}` instead of human-readable text. This is normal hook protocol output — **ignore it**. Use exit code and HTTP health checks to determine success/failure.
 
-## CLI Auto-Detection
+## Plugin Root Resolution
 
-All operations need to find worker-cli.js first. Use this bash pattern:
+All operations need to locate the plugin directory first. This uses the same 3-level fallback as the hooks in `hooks.json`:
+
+1. `CLAUDE_PLUGIN_ROOT` environment variable (set by Claude Code)
+2. Cache directory (versioned, managed by Claude Code)
+3. Marketplace directory (final fallback)
 
 ```bash
-WORKER_CLI=$(\ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
-if [ -z "$WORKER_CLI" ]; then
-  echo "ERROR: worker-cli.js not found in plugin cache."
-  echo "Is the claude-mem plugin installed? Run /install in Claude Code first."
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+if [ -z "$PLUGIN_ROOT" ]; then
+  PLUGIN_ROOT=$(\ls -dt $HOME/.claude/plugins/cache/thedotmack/claude-mem/[0-9]*/ 2>/dev/null | head -1)
+  PLUGIN_ROOT="${PLUGIN_ROOT%/}"
+fi
+if [ -z "$PLUGIN_ROOT" ]; then
+  PLUGIN_ROOT="$HOME/.claude/plugins/marketplaces/thedotmack/plugin"
+fi
+WORKER_SERVICE="$PLUGIN_ROOT/scripts/worker-service.cjs"
+if [ ! -f "$WORKER_SERVICE" ]; then
+  echo "ERROR: worker-service.cjs not found at $WORKER_SERVICE"
+  echo "Is the claude-mem plugin installed?"
   exit 1
 fi
 ```
 
-If this fails, report to user: "claude-mem plugin is not installed or not cached yet."
+Note: `\ls` avoids shell aliases that may add unwanted flags.
 
 ## Operations
 
@@ -44,12 +56,23 @@ Parse the operation from the user's message or skill args. Default to `status` i
 ### start
 
 ```bash
-WORKER_CLI=$(\ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
-if [ -z "$WORKER_CLI" ]; then echo "ERROR: worker-cli.js not found. Is the plugin installed?"; exit 1; fi
-CLAUDE_MEM_MANUAL_START=true bun "$WORKER_CLI" start
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+if [ -z "$PLUGIN_ROOT" ]; then
+  PLUGIN_ROOT=$(\ls -dt $HOME/.claude/plugins/cache/thedotmack/claude-mem/[0-9]*/ 2>/dev/null | head -1)
+  PLUGIN_ROOT="${PLUGIN_ROOT%/}"
+fi
+if [ -z "$PLUGIN_ROOT" ]; then
+  PLUGIN_ROOT="$HOME/.claude/plugins/marketplaces/thedotmack/plugin"
+fi
+WORKER_SERVICE="$PLUGIN_ROOT/scripts/worker-service.cjs"
+if [ ! -f "$WORKER_SERVICE" ]; then
+  echo "ERROR: worker-service.cjs not found."
+  exit 1
+fi
+CLAUDE_MEM_MANUAL_START=true bun "$WORKER_SERVICE" start --force
 ```
 
-**CLAUDE_MEM_MANUAL_START=true is required** — it bypasses the `WORKER_AUTO_START=false` guard which is designed to block hook-triggered auto-start, not manual CLI start.
+**CLAUDE_MEM_MANUAL_START=true is required** — it bypasses the `WORKER_AUTO_START=false` guard which is designed to block hook-triggered auto-start, not manual CLI start. **--force** ensures the auto-start setting is also bypassed.
 
 After running, verify with health check:
 
@@ -62,23 +85,35 @@ Report success or failure based on the health check response, not the CLI stdout
 ### stop
 
 ```bash
-WORKER_CLI=$(\ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
-if [ -z "$WORKER_CLI" ]; then echo "ERROR: worker-cli.js not found."; exit 1; fi
-bun "$WORKER_CLI" stop
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+if [ -z "$PLUGIN_ROOT" ]; then
+  PLUGIN_ROOT=$(\ls -dt $HOME/.claude/plugins/cache/thedotmack/claude-mem/[0-9]*/ 2>/dev/null | head -1)
+  PLUGIN_ROOT="${PLUGIN_ROOT%/}"
+fi
+if [ -z "$PLUGIN_ROOT" ]; then
+  PLUGIN_ROOT="$HOME/.claude/plugins/marketplaces/thedotmack/plugin"
+fi
+bun "$PLUGIN_ROOT/scripts/worker-service.cjs" stop
 ```
 
 Verify the worker is down:
 
 ```bash
-curl -s http://localhost:37777/api/health 2>/dev/null && echo "WARNING: Worker still responding" || echo "Worker stopped successfully"
+curl -s --max-time 3 http://localhost:37777/api/health 2>/dev/null && echo "WARNING: Worker still responding" || echo "Worker stopped successfully"
 ```
 
 ### restart
 
 ```bash
-WORKER_CLI=$(\ls -d ~/.claude/plugins/cache/thedotmack/claude-mem/*/scripts/worker-cli.js 2>/dev/null | sort -r | head -1)
-if [ -z "$WORKER_CLI" ]; then echo "ERROR: worker-cli.js not found."; exit 1; fi
-CLAUDE_MEM_MANUAL_START=true bun "$WORKER_CLI" restart
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+if [ -z "$PLUGIN_ROOT" ]; then
+  PLUGIN_ROOT=$(\ls -dt $HOME/.claude/plugins/cache/thedotmack/claude-mem/[0-9]*/ 2>/dev/null | head -1)
+  PLUGIN_ROOT="${PLUGIN_ROOT%/}"
+fi
+if [ -z "$PLUGIN_ROOT" ]; then
+  PLUGIN_ROOT="$HOME/.claude/plugins/marketplaces/thedotmack/plugin"
+fi
+CLAUDE_MEM_MANUAL_START=true bun "$PLUGIN_ROOT/scripts/worker-service.cjs" restart --force
 ```
 
 Verify with health check after a few seconds:
@@ -125,7 +160,7 @@ if [ -f "$LOG_FILE" ]; then
 else
   echo "No log file found for today."
   echo "Available logs:"
-  ls -lt ~/.claude-mem/logs/*.log 2>/dev/null | head -5
+  \ls -lt ~/.claude-mem/logs/*.log 2>/dev/null | head -5
 fi
 ```
 
@@ -135,7 +170,7 @@ If the user wants more lines, use `tail -100` or `tail -200`. For older logs, sp
 
 | Scenario | What to Tell User |
 |----------|-------------------|
-| worker-cli.js not found | "claude-mem plugin is not installed or not cached. Install the plugin first." |
+| worker-service.cjs not found | "claude-mem plugin is not installed. Install the plugin first." |
 | bun not found (exit code 127) | "bun is required but not installed. Install from https://bun.sh" |
 | Start fails — port in use | "Port 37777 is already in use. Check with: `netstat -ano \\| grep 37777`. A zombie process may be holding the port." |
 | PID file exists but health check fails | "Worker appears to have crashed (PID file exists but not responding). Try `/worker-manage stop` then `/worker-manage start`." |

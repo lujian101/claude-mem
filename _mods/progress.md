@@ -176,3 +176,31 @@
 
 - [ ] 集成测试验收剩余项（8.5）— Viewer UI、build-sync.py
 - [ ] 构建发布流程文档（8.6）
+
+### 2026-04-18 — Worker 路径修复 & 超时验证
+
+**已完成**
+
+- [x] **F19：Worker 路径不匹配**
+  - 发现 hooks.json 三级 fallback（CLAUDE_PLUGIN_ROOT → cache → marketplace）
+  - worker-cli.js 硬编码 marketplace，worker-manage skill 只查 cache，三方不一致
+  - 分析 `MARKETPLACE_ROOT`（paths.ts:62）是源码唯一硬编码路径，cache 不在考虑范围
+
+- [x] **worker-manage SKILL.md 重写**
+  - 去掉 worker-cli.js，直接用 worker-service.cjs（跟 hooks 一致）
+  - 采用三级 fallback 路径解析（多行格式，\ls 避免 alias）
+  - start/restart 加 `--force`
+  - stop 验证 curl 加 `--max-time 3`（之前裸 curl 卡 1+ 分钟）
+  - 验证通过：stop/start 正常，路径解析到 cache 目录
+
+- [x] **F20：Hook 超时行为验证**
+  - 关闭 worker 后连续对话多轮，无延迟无卡顿
+  - 快速失败机制正常：hook 检测到 worker 不可达 → 直接返回空结果
+  - Toast 触发验证：`.last-worker-down-toast` 标记文件确认弹出（5 秒自动消失易忽略）
+  - auto-start=false 正常阻止自动拉起
+
+**待处理**
+
+- [ ] 源码层面 `MARKETPLACE_ROOT` → cache 路径统一（更大重构，暂不处理）
+- [ ] 集成测试验收剩余项（8.5）
+- [ ] 构建发布流程文档（8.6）

@@ -142,7 +142,7 @@
 **分支**：`main`
 **版本**：v12.1.0（与上游同步）
 **与上游差异**：10 个文件 + `_mods/` 目录 + `.vscode/`
-**本次会话**：验证 F15/F16 修复通过（3 轮循环），修复 F18（worker-manage.py env 丢失），修复 TS 编译错误
+**本次会话**：修复 worker 路径不匹配（F19），重写 worker-manage SKILL.md，验证 hook 超时行为（F20）
 **编译产物状态**：项目/cache/marketplace 三处一致
 **配置状态**：WORKER_AUTO_START=false, HOOK_TOTAL_TIMEOUT_MS=10000, enabledPlugins=false
 **端口状态**：37777 空闲（手动管理模式）

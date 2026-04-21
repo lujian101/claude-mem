@@ -96,7 +96,7 @@ def check_sync(work_dir: Path, show_diff: bool, do_sync: bool):
             n_ok += 1
         elif not w_ok:
             marker = "?"
-            n_diff += 1
+            # orphan files (not in work_dir) are not actionable, skip counting
         else:
             is_new = not c_ok or not m_ok
             if do_sync:
@@ -117,7 +117,7 @@ def check_sync(work_dir: Path, show_diff: bool, do_sync: bool):
                 else:
                     n_diff += 1
 
-        show = marker != M_OK or show_diff
+        show = (marker != M_OK and marker != "?") or show_diff
         if show:
             num = f"{idx:>3}"
             lines.append(f" {num} {w_mtime} {marker} {key}")

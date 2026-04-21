@@ -55,10 +55,10 @@ def step_build():
 def step_diff() -> int:
     global total_files
     print("\n  [Step 2/3] Check diff")
-    print("  Command: python _mods/check-sync.py --diff")
+    print("  Command: python _mods/check-sync.py")
     if confirm("Proceed with diff check?"):
         result = subprocess.run(
-            [sys.executable, str(CHECK_SYNC), "--diff"],
+            [sys.executable, str(CHECK_SYNC)],
             cwd=PROJECT_DIR,
             capture_output=True,
             text=True,
@@ -98,10 +98,10 @@ def step_sync(needs_sync: bool):
         return
 
     print("\n  [Step 3/3] Sync to cache + marketplace")
-    print("  Command: python _mods/check-sync.py --sync --diff")
+    print("  Command: python _mods/check-sync.py --sync")
     if confirm("Proceed with sync?"):
         result = subprocess.run(
-            [sys.executable, str(CHECK_SYNC), "--sync", "--diff"],
+            [sys.executable, str(CHECK_SYNC), "--sync"],
             cwd=PROJECT_DIR,
             capture_output=True,
             text=True,

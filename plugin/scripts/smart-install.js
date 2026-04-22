@@ -28,6 +28,59 @@ function isPluginDisabledInClaudeSettings() {
   }
 }
 
+/**
+ * Check if CLAUDE_MEM_WORKER_AUTO_START is set to 'false' in settings.
+ * Reads directly from settings.json — mirrors the check in worker-spawner.ts.
+ */
+function isWorkerAutoStartDisabled() {
+  try {
+    const dataDir = process.env.CLAUDE_MEM_DATA_DIR || join(homedir(), '.claude-mem');
+    const settingsPath = join(dataDir, 'settings.json');
+    if (!existsSync(settingsPath)) return false;
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    return settings.CLAUDE_MEM_WORKER_AUTO_START === 'false';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Show a Windows toast notification telling the user to manually restart the worker.
+ * Uses Start-Process to spawn an independent PowerShell process so the notification
+ * survives the hook process exiting.
+ */
+function showRestartNotification(version) {
+  if (process.platform !== 'win32') {
+    console.error(`[claude-mem] ⚠ Worker updated to v${version}. Please restart the worker manually.`);
+    return;
+  }
+  try {
+    // Spawn an independent PowerShell process that shows a toast.
+    // Start-Process ensures the toast process survives after the hook exits.
+    const psScript = [
+      'Add-Type -AssemblyName System.Windows.Forms',
+      '$n = New-Object System.Windows.Forms.NotifyIcon',
+      '$n.Icon = [System.Drawing.SystemIcons]::Warning',
+      '$n.BalloonTipTitle = "Claude-Mem Updated"',
+      `$n.BalloonTipText = "Plugin updated to v${version}. Worker in manual mode — please restart manually."`,
+      '$n.Visible = $true',
+      '$n.ShowBalloonTip(5000)',
+      'Start-Sleep 6',
+      '$n.Dispose()'
+    ].join('; ');
+
+    const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
+    // Use Start-Process to decouple from the hook process lifecycle
+    execSync(
+      `powershell -NoProfile -NonInteractive -Command "Start-Process powershell -ArgumentList '-NoProfile','-EncodedCommand','${encodedCommand}' -WindowStyle Hidden"`,
+      { timeout: 10000, windowsHide: true, stdio: 'ignore' }
+    );
+  } catch {
+    // Toast failure must never block the hook
+    console.error(`[claude-mem] ⚠ Worker updated to v${version}. Please restart the worker manually.`);
+  }
+}
+
 if (isPluginDisabledInClaudeSettings()) {
   process.exit(0);
 }
@@ -610,23 +663,33 @@ try {
 
     // Auto-restart worker to pick up new code
     const port = process.env.CLAUDE_MEM_WORKER_PORT || 37777;
-    console.error(`[claude-mem] Plugin updated to v${newVersion} - restarting worker...`);
-    try {
-      // Graceful shutdown via HTTP (curl is cross-platform enough)
-      execSync(`curl -s -X POST http://127.0.0.1:${port}/api/admin/shutdown`, {
-        stdio: 'ignore',
-        shell: IS_WINDOWS,
-        timeout: 5000
-      });
-      // Brief wait for port to free
-      execSync(IS_WINDOWS ? 'timeout /t 1 /nobreak >nul' : 'sleep 0.5', {
-        stdio: 'ignore',
-        shell: true
-      });
-    } catch {
-      // Worker wasn't running or already stopped - that's fine
+
+    // Check if worker auto-start is disabled (manual management mode)
+    const autoStartDisabled = isWorkerAutoStartDisabled();
+
+    if (autoStartDisabled) {
+      // In manual mode: don't kill the worker, notify user to restart manually
+      console.error(`[claude-mem] Plugin updated to v${newVersion} — worker in manual mode, skipping auto-restart`);
+      showRestartNotification(newVersion);
+    } else {
+      console.error(`[claude-mem] Plugin updated to v${newVersion} - restarting worker...`);
+      try {
+        // Graceful shutdown via HTTP (curl is cross-platform enough)
+        execSync(`curl -s -X POST http://127.0.0.1:${port}/api/admin/shutdown`, {
+          stdio: 'ignore',
+          shell: IS_WINDOWS,
+          timeout: 5000
+        });
+        // Brief wait for port to free
+        execSync(IS_WINDOWS ? 'timeout /t 1 /nobreak >nul' : 'sleep 0.5', {
+          stdio: 'ignore',
+          shell: true
+        });
+      } catch {
+        // Worker wasn't running or already stopped - that's fine
+      }
+      // Worker will be started fresh by next hook in chain (worker-service.cjs start)
     }
-    // Worker will be started fresh by next hook in chain (worker-service.cjs start)
   }
 
   // Step 4: Install CLI to PATH

@@ -1,6 +1,6 @@
 import path from "path";
 import { readFileSync, existsSync, statSync, writeFileSync } from "fs";
-import { exec } from "child_process";
+import { exec, execSync } from "child_process";
 import { logger } from "../utils/logger.js";
 import { HOOK_TIMEOUTS, getTimeout } from "./hook-constants.js";
 import { SettingsDefaultsManager } from "./SettingsDefaultsManager.js";
@@ -271,7 +271,13 @@ function showWorkerDownToast(): void {
       + `Start-Sleep 6;$n.Dispose()`,
       'utf16le'
     ).toString('base64');
-    exec(`powershell -NoProfile -NonInteractive -EncodedCommand ${ps}`);
+    // Use Start-Process to spawn an independent PowerShell for the toast.
+    // execSync ensures Start-Process completes before the hook exits;
+    // the inner PowerShell process is fully decoupled via Start-Process.
+    execSync(
+      `powershell -NoProfile -NonInteractive -Command "Start-Process powershell -ArgumentList '-NoProfile','-EncodedCommand','${ps}' -WindowStyle Hidden"`,
+      { timeout: 5000, windowsHide: true, stdio: 'ignore' }
+    );
   } catch {
     // Toast failure must never block the hook
   }

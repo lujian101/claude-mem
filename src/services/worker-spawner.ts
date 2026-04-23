@@ -120,7 +120,13 @@ export async function ensureWorkerStarted(
   if (!force) {
     const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
     if (settings.CLAUDE_MEM_WORKER_AUTO_START === 'false') {
-      logger.info('SYSTEM', 'Worker auto-start disabled by CLAUDE_MEM_WORKER_AUTO_START=false');
+      // Auto-start is disabled, but worker may already be running — check health
+      // before returning false to avoid misleading "failed to start" warnings.
+      if (await waitForHealth(port, 1000)) {
+        logger.info('SYSTEM', 'Worker already running (auto-start disabled, health check passed)');
+        return true;
+      }
+      logger.info('SYSTEM', 'Worker auto-start disabled by CLAUDE_MEM_WORKER_AUTO_START=false, worker not running');
       return false;
     }
   }

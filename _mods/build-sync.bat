@@ -41,13 +41,13 @@ echo.
 
 :: Step 2: Diff
 echo  [Step 2/3] Check diff
-echo  Command: python _mods/check-sync.py --diff
+echo  Command: python _mods/check-sync.py
 echo.
 set /p CONFIRM="  Proceed with diff check? (y/n): "
 if /i "!CONFIRM!"=="y" (
     echo.
     cd /d "%PROJECT_DIR%"
-    python "%PY_CHECK%" --diff
+    python "%PY_CHECK%"
     echo.
 ) else (
     echo  Skipped.
@@ -57,13 +57,13 @@ echo.
 
 :: Step 3: Sync
 echo  [Step 3/3] Sync to cache + marketplace
-echo  Command: python _mods/check-sync.py --sync --diff
+echo  Command: python _mods/check-sync.py --sync
 echo.
 set /p CONFIRM="  Proceed with sync? (y/n): "
 if /i "!CONFIRM!"=="y" (
     echo.
     cd /d "%PROJECT_DIR%"
-    python "%PY_CHECK%" --sync --diff
+    python "%PY_CHECK%" --sync
     echo.
     echo  Don't forget to run /reload-plugins in Claude Code!
 ) else (

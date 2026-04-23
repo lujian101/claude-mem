@@ -13,8 +13,9 @@
 
 import { buildContinuationPrompt, buildInitPrompt, buildObservationPrompt, buildSummaryPrompt } from '../../sdk/prompts.js';
 import { getCredential } from '../../shared/EnvManager.js';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
-import { USER_SETTINGS_PATH } from '../../shared/paths.js';
+import { USER_SETTINGS_PATH, DATA_DIR } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
 import { ModeManager } from '../domain/ModeManager.js';
 import type { ModeConfig } from '../domain/types.js';
@@ -67,9 +68,35 @@ export class OpenRouterAgent {
   private sessionManager: SessionManager;
   private fallbackAgent: FallbackAgent | null = null;
 
+  // Hot-reload cache for ~/.claude-mem/model-config.json
+  private static modelConfigCache: Record<string, { extra_body?: Record<string, unknown>; base_url?: string }> | null = null;
+  private static modelConfigMtime: number = 0;
+
   constructor(dbManager: DatabaseManager, sessionManager: SessionManager) {
     this.dbManager = dbManager;
     this.sessionManager = sessionManager;
+  }
+
+  /**
+   * Load per-model config from ~/.claude-mem/model-config.json with mtime-based hot-reload.
+   * Format: { "model-name": { "extra_body": {...}, "base_url": "..." } }
+   */
+  private static loadModelConfig(): Record<string, { extra_body?: Record<string, unknown>; base_url?: string }> {
+    const configPath = `${DATA_DIR}/model-config.json`;
+    try {
+      const stat = statSync(configPath);
+      if (stat.mtimeMs !== OpenRouterAgent.modelConfigMtime) {
+        OpenRouterAgent.modelConfigCache = JSON.parse(readFileSync(configPath, 'utf-8'));
+        OpenRouterAgent.modelConfigMtime = stat.mtimeMs;
+        logger.debug('SDK', 'model-config.json reloaded');
+      }
+    } catch {
+      // File missing or corrupt — return empty cache
+      if (OpenRouterAgent.modelConfigCache === null) {
+        OpenRouterAgent.modelConfigCache = {};
+      }
+    }
+    return OpenRouterAgent.modelConfigCache;
   }
 
   /**
@@ -435,8 +462,12 @@ export class OpenRouterAgent {
     const totalChars = truncatedHistory.reduce((sum, m) => sum + m.content.length, 0);
     const estimatedTokens = this.estimateTokens(truncatedHistory.map(m => m.content).join(''));
 
-    // Use configured base URL or default to OpenRouter official endpoint
-    const apiUrl = baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
+    // Apply per-model overrides from ~/.claude-mem/model-config.json
+    const modelConfig = OpenRouterAgent.loadModelConfig();
+    const modelOverride = modelConfig[model] || {};
+
+    // base_url override from model-config (highest priority)
+    const apiUrl = modelOverride.base_url || baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
 
     logger.debug('SDK', `Querying OpenRouter multi-turn (${model})`, {
       turns: truncatedHistory.length,
@@ -466,18 +497,8 @@ export class OpenRouterAgent {
       }
     }
 
-    // Parse extra body params from settings (model-specific, e.g. thinking control)
-    let extraBody: Record<string, unknown> = {};
-    try {
-      const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-      if (settings.CLAUDE_MEM_OPENROUTER_EXTRA_BODY) {
-        extraBody = JSON.parse(settings.CLAUDE_MEM_OPENROUTER_EXTRA_BODY);
-      }
-    } catch (e) {
-      logger.warn('SDK', 'Failed to parse CLAUDE_MEM_OPENROUTER_EXTRA_BODY, ignoring', {
-        error: e instanceof Error ? e.message : String(e)
-      });
-    }
+    // Per-model extra_body from model-config.json (e.g. {"enable_thinking": false})
+    const extraBody = modelOverride.extra_body || {};
 
     const response = await fetch(apiUrl, {
       method: 'POST',

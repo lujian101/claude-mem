@@ -13,7 +13,7 @@
 
 import { buildContinuationPrompt, buildInitPrompt, buildObservationPrompt, buildSummaryPrompt } from '../../sdk/prompts.js';
 import { getCredential } from '../../shared/EnvManager.js';
-import { readFileSync, existsSync, statSync } from 'fs';
+import { readFileSync, statSync } from 'fs';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH, DATA_DIR } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
@@ -69,7 +69,7 @@ export class OpenRouterAgent {
   private fallbackAgent: FallbackAgent | null = null;
 
   // Hot-reload cache for ~/.claude-mem/model-config.json
-  private static modelConfigCache: Record<string, { extra_body?: Record<string, unknown>; base_url?: string }> | null = null;
+  private static modelConfigCache: Record<string, unknown> | null = null;
   private static modelConfigMtime: number = 0;
 
   constructor(dbManager: DatabaseManager, sessionManager: SessionManager) {
@@ -79,9 +79,10 @@ export class OpenRouterAgent {
 
   /**
    * Load per-model config from ~/.claude-mem/model-config.json with mtime-based hot-reload.
-   * Format: { "model-name": { "extra_body": {...}, "base_url": "..." } }
+   * Top-level keys: "model" (override summary model), "base_url" (override API endpoint).
+   * Per-model keys: { "model-name": { "extra_body": {...}, "base_url": "..." } }
    */
-  private static loadModelConfig(): Record<string, { extra_body?: Record<string, unknown>; base_url?: string }> {
+  private static loadModelConfig() {
     const configPath = `${DATA_DIR}/model-config.json`;
     try {
       const stat = statSync(configPath);
@@ -463,11 +464,11 @@ export class OpenRouterAgent {
     const estimatedTokens = this.estimateTokens(truncatedHistory.map(m => m.content).join(''));
 
     // Apply per-model overrides from ~/.claude-mem/model-config.json
-    const modelConfig = OpenRouterAgent.loadModelConfig();
-    const modelOverride = modelConfig[model] || {};
+    const modelConfig = OpenRouterAgent.loadModelConfig()!;
+    const modelOverride = (modelConfig[model] || {}) as { extra_body?: Record<string, unknown>; base_url?: string };
 
     // base_url override from model-config (highest priority)
-    const apiUrl = modelOverride.base_url || baseUrl || 'https://openrouter.ai/api/v1/chat/completions';
+    const apiUrl = modelOverride.base_url || baseUrl || OPENROUTER_API_URL;
 
     logger.debug('SDK', `Querying OpenRouter multi-turn (${model})`, {
       turns: truncatedHistory.length,
@@ -572,15 +573,16 @@ export class OpenRouterAgent {
     // This prevents Issue #733 where random project .env files could interfere
     const apiKey = settings.CLAUDE_MEM_OPENROUTER_API_KEY || getCredential('OPENROUTER_API_KEY') || '';
 
-    // Model: from settings or default
-    const model = settings.CLAUDE_MEM_OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free';
+    // Model: model-config.json "model" > settings > default
+    const modelConfig = OpenRouterAgent.loadModelConfig();
+    const model = (modelConfig as Record<string, unknown>).model as string || settings.CLAUDE_MEM_OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free';
 
     // Optional analytics headers
     const siteUrl = settings.CLAUDE_MEM_OPENROUTER_SITE_URL || '';
     const appName = settings.CLAUDE_MEM_OPENROUTER_APP_NAME || 'claude-mem';
 
-    // Base URL: from settings (for domestic models) or default to OpenRouter official endpoint
-    const baseUrl = settings.CLAUDE_MEM_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1/chat/completions';
+    // Base URL: model-config.json "base_url" > settings > default
+    const baseUrl = (modelConfig as Record<string, unknown>).base_url as string || settings.CLAUDE_MEM_OPENROUTER_BASE_URL || OPENROUTER_API_URL;
 
     return { apiKey, model, siteUrl, appName, baseUrl };
   }

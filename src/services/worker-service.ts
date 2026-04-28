@@ -1217,7 +1217,10 @@ async function main() {
     case 'restart': {
       logger.info('SYSTEM', 'Restarting worker');
       await httpShutdown(port);
-      const restartFreed = await waitForPortFree(port, getPlatformTimeout(15000));
+      // Wait for port to be freed after graceful shutdown.
+      // Use 45s timeout because deleteSession() waits up to 30s for generator abort,
+      // and we need extra time for the shutdown sequence (HTTP close + DB close + subprocess cleanup).
+      const restartFreed = await waitForPortFree(port, getPlatformTimeout(45000));
       if (!restartFreed) {
         logger.error('SYSTEM', 'Port did not free up after shutdown, aborting restart', { port });
         process.exit(0);

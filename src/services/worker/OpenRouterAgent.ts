@@ -469,8 +469,10 @@ export class OpenRouterAgent {
     const enabled = mc.enable !== false;
     const modelOverride = (enabled && mc[model]) as Record<string, unknown> | undefined || {};
 
-    // base_url override from model-config (highest priority)
-    const apiUrl = modelOverride.base_url || baseUrl || OPENROUTER_API_URL;
+    // base_url override: per-model > model-config top-level > passed baseUrl > default
+    // This matches getOpenRouterConfig() priority for consistency
+    const modelBaseUrl = (modelOverride.base_url as string) || (enabled && mc.base_url as string) || undefined;
+    const apiUrl = modelBaseUrl || baseUrl || OPENROUTER_API_URL;
 
     logger.debug('SDK', `Querying OpenRouter multi-turn (${model})`, {
       turns: truncatedHistory.length,

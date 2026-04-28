@@ -35,6 +35,7 @@ export interface SettingsDefaults {
   CLAUDE_MEM_OPENROUTER_MAX_TOKENS: string;
   CLAUDE_MEM_OPENROUTER_EXTRA_BODY: string;  // JSON string merged into API request body (model-specific params like thinking control)
   // System Configuration
+  CLAUDE_MEM_MAX_SESSION_WALL_CLOCK_HOURS: string;  // Max session age in hours before generator stops (<=0 to disable, default: 4)
   CLAUDE_MEM_DATA_DIR: string;
   CLAUDE_MEM_LOG_LEVEL: string;
   CLAUDE_MEM_PYTHON_VERSION: string;
@@ -110,6 +111,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_OPENROUTER_MAX_TOKENS: '100000',  // Max estimated tokens (~100k safety limit)
     CLAUDE_MEM_OPENROUTER_EXTRA_BODY: '',  // JSON string merged into request body (e.g. '{"thinking":{"type":"enabled"}}')
     // System Configuration
+    CLAUDE_MEM_MAX_SESSION_WALL_CLOCK_HOURS: '4',  // Max session age in hours (<=0 disables)
     CLAUDE_MEM_DATA_DIR: join(homedir(), '.claude-mem'),
     CLAUDE_MEM_LOG_LEVEL: 'INFO',
     CLAUDE_MEM_PYTHON_VERSION: '3.13',

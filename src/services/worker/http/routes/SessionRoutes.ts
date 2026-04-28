@@ -21,6 +21,7 @@ import { SessionCompletionHandler } from '../../session/SessionCompletionHandler
 import { PrivacyCheckValidator } from '../../validation/PrivacyCheckValidator.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
+import { statSync } from 'fs';
 import { getProcessBySession, ensureProcessExit } from '../../ProcessRegistry.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
 import { normalizePlatformSource } from '../../../../shared/platform-source.js';
@@ -94,7 +95,23 @@ export class SessionRoutes extends BaseRouteHandler {
    * The next generator will use the new provider with shared conversationHistory.
    */
   private static readonly STALE_GENERATOR_THRESHOLD_MS = 30_000; // 30 seconds (#1099)
-  private static readonly MAX_SESSION_WALL_CLOCK_MS = 4 * 60 * 60 * 1000; // 4 hours (#1590)
+
+  // Cached wall-clock limit (mtime-based hot-reload from settings.json)
+  private static wallClockHoursCache: number = 4;
+  private static settingsMtime: number = 0;
+
+  private static getWallClockHours(): number {
+    try {
+      const mtime = statSync(USER_SETTINGS_PATH).mtimeMs;
+      if (mtime !== SessionRoutes.settingsMtime) {
+        const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+        const parsed = parseInt(settings.CLAUDE_MEM_MAX_SESSION_WALL_CLOCK_HOURS, 10);
+        SessionRoutes.wallClockHoursCache = isNaN(parsed) ? 4 : parsed;
+        SessionRoutes.settingsMtime = mtime;
+      }
+    } catch { /* keep cached value */ }
+    return SessionRoutes.wallClockHoursCache;
+  }
 
   private ensureGeneratorRunning(sessionDbId: number, source: string): void {
     const session = this.sessionManager.getSession(sessionDbId);
@@ -102,27 +119,30 @@ export class SessionRoutes extends BaseRouteHandler {
 
     // Wall-clock age guard: refuse to start new generators for sessions that have
     // been alive too long to prevent runaway API costs (Issue #1590).
-    // Use the persisted started_at_epoch from the DB so the guard survives worker
-    // restarts (session.startTime is reset to Date.now() on every re-activation).
-    const dbSessionRecord = this.dbManager.getSessionStore().db
-      .prepare('SELECT started_at_epoch FROM sdk_sessions WHERE id = ? LIMIT 1')
-      .get(sessionDbId) as { started_at_epoch: number } | undefined;
-    const sessionOriginMs = dbSessionRecord?.started_at_epoch ?? session.startTime;
-    const sessionAgeMs = Date.now() - sessionOriginMs;
-    if (sessionAgeMs > SessionRoutes.MAX_SESSION_WALL_CLOCK_MS) {
-      logger.warn('SESSION', 'Session exceeded wall-clock age limit — aborting to prevent runaway spend', {
-        sessionId: sessionDbId,
-        ageHours: Math.round(sessionAgeMs / 3_600_000 * 10) / 10,
-        limitHours: SessionRoutes.MAX_SESSION_WALL_CLOCK_MS / 3_600_000,
-        source
-      });
-      if (!session.abortController.signal.aborted) {
-        session.abortController.abort();
+    // Configurable via CLAUDE_MEM_MAX_SESSION_WALL_CLOCK_HOURS (<=0 disables).
+    const wallClockHours = SessionRoutes.getWallClockHours();
+    if (wallClockHours > 0) {
+      const maxMs = wallClockHours * 60 * 60 * 1000;
+      const dbSessionRecord = this.dbManager.getSessionStore().db
+        .prepare('SELECT started_at_epoch FROM sdk_sessions WHERE id = ? LIMIT 1')
+        .get(sessionDbId) as { started_at_epoch: number } | undefined;
+      const sessionOriginMs = dbSessionRecord?.started_at_epoch ?? session.startTime;
+      const sessionAgeMs = Date.now() - sessionOriginMs;
+      if (sessionAgeMs > maxMs) {
+        logger.warn('SESSION', 'Session exceeded wall-clock age limit — aborting to prevent runaway spend', {
+          sessionId: sessionDbId,
+          ageHours: Math.round(sessionAgeMs / 3_600_000 * 10) / 10,
+          limitHours: wallClockHours,
+          source
+        });
+        if (!session.abortController.signal.aborted) {
+          session.abortController.abort();
+        }
+        const pendingStore = this.sessionManager.getPendingMessageStore();
+        pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
+        this.sessionManager.removeSessionImmediate(sessionDbId);
+        return;
       }
-      const pendingStore = this.sessionManager.getPendingMessageStore();
-      pendingStore.markAllSessionMessagesAbandoned(sessionDbId);
-      this.sessionManager.removeSessionImmediate(sessionDbId);
-      return;
     }
 
     // GUARD: Prevent duplicate spawns

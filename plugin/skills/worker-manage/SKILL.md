@@ -176,6 +176,16 @@ If the user wants more lines, use `tail -100` or `tail -200`. For older logs, sp
 | PID file exists but health check fails | "Worker appears to have crashed (PID file exists but not responding). Try `/worker-manage stop` then `/worker-manage start`." |
 | Worker already running on start | "Worker is already running. Use `/worker-manage restart` to reload." |
 
+## Windows Zombie Port Warning
+
+**NEVER force-kill (taskkill /F, SIGKILL) the worker process on Windows.** This leaves the TCP socket in LISTENING state with no owning process — a "zombie port" that blocks new workers from starting until the OS reclaims it (can take minutes).
+
+The stop command uses graceful HTTP shutdown (`POST /api/admin/shutdown`). If the worker doesn't respond within 15 seconds, the stop command logs a warning and cleans up the PID file but does NOT force-kill the process. If you encounter a zombie port:
+
+1. Wait 2-5 minutes for Windows TCP stack to reclaim the socket
+2. Then retry `/claude-mem:worker-manage start`
+3. As a last resort, close all terminal windows that held connections to port 37777
+
 ## Notes
 
 - The worker runs on port 37777 by default (configurable in `~/.claude-mem/settings.json`)

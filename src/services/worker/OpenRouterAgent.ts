@@ -465,7 +465,9 @@ export class OpenRouterAgent {
 
     // Apply per-model overrides from ~/.claude-mem/model-config.json
     const modelConfig = OpenRouterAgent.loadModelConfig()!;
-    const modelOverride = (modelConfig[model] || {}) as { extra_body?: Record<string, unknown>; base_url?: string };
+    const mc = modelConfig as Record<string, unknown>;
+    const enabled = mc.enable !== false;
+    const modelOverride = (enabled && mc[model]) as Record<string, unknown> | undefined || {};
 
     // base_url override from model-config (highest priority)
     const apiUrl = modelOverride.base_url || baseUrl || OPENROUTER_API_URL;
@@ -569,20 +571,33 @@ export class OpenRouterAgent {
     const settingsPath = USER_SETTINGS_PATH;
     const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
 
-    // API key: check settings first, then centralized claude-mem .env (NOT process.env)
-    // This prevents Issue #733 where random project .env files could interfere
-    const apiKey = settings.CLAUDE_MEM_OPENROUTER_API_KEY || getCredential('OPENROUTER_API_KEY') || '';
-
-    // Model: model-config.json "model" > settings > default
+    // Load model-config.json overrides (hot-reloaded via mtime)
     const modelConfig = OpenRouterAgent.loadModelConfig();
-    const model = (modelConfig as Record<string, unknown>).model as string || settings.CLAUDE_MEM_OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free';
+    const mc = modelConfig as Record<string, unknown>;
+    const enabled = mc.enable !== false;  // default true if missing
 
-    // Optional analytics headers
+    // Model: model-config "model" > settings > default
+    const model = (enabled && mc.model as string) || settings.CLAUDE_MEM_OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free';
+
+    // Per-model override block
+    const modelOverride = (enabled && mc[model]) as Record<string, unknown> | undefined || {};
+
+    // API key: per-model override > model-config top-level > settings > env
+    const apiKey = (modelOverride.api_key as string)
+      || (enabled && mc.api_key as string)
+      || settings.CLAUDE_MEM_OPENROUTER_API_KEY
+      || getCredential('OPENROUTER_API_KEY')
+      || '';
+
+    // Base URL: per-model > model-config top-level > settings > default
+    const baseUrl = (modelOverride.base_url as string)
+      || (enabled && mc.base_url as string)
+      || settings.CLAUDE_MEM_OPENROUTER_BASE_URL
+      || OPENROUTER_API_URL;
+
+    // Optional analytics headers (always from settings)
     const siteUrl = settings.CLAUDE_MEM_OPENROUTER_SITE_URL || '';
     const appName = settings.CLAUDE_MEM_OPENROUTER_APP_NAME || 'claude-mem';
-
-    // Base URL: model-config.json "base_url" > settings > default
-    const baseUrl = (modelConfig as Record<string, unknown>).base_url as string || settings.CLAUDE_MEM_OPENROUTER_BASE_URL || OPENROUTER_API_URL;
 
     return { apiKey, model, siteUrl, appName, baseUrl };
   }

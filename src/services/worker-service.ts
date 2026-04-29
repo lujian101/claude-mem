@@ -13,7 +13,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { getWorkerPort, getWorkerHost } from '../shared/worker-utils.js';
+import { getWorkerPort, getWorkerHost, showWindowsToast, showWindowsMessageBox } from '../shared/worker-utils.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { SettingsDefaultsManager } from '../shared/SettingsDefaultsManager.js';
 import { getAuthMethodDescription } from '../shared/EnvManager.js';
@@ -1204,9 +1204,52 @@ async function main() {
 
     case 'stop': {
       await httpShutdown(port);
-      const freed = await waitForPortFree(port, getPlatformTimeout(15000));
+      // SHUTDOWN_TOTAL accounts for: HTTP close(~1s) + generator abort(30s) + MCP/Chroma/DB(~5s) + supervisor(5s) + margin
+      const freed = await waitForPortFree(port, getPlatformTimeout(HOOK_TIMEOUTS.SHUTDOWN_TOTAL));
       if (!freed) {
-        logger.warn('SYSTEM', 'Port did not free up after shutdown', { port });
+        logger.error('SYSTEM', 'Port did not free up after shutdown, possible zombie port', {
+          port,
+          timeoutMs: HOOK_TIMEOUTS.SHUTDOWN_TOTAL
+        });
+
+        // Blocking dialog: ask user what to do
+        const choice = showWindowsMessageBox(
+          'claude-mem Shutdown Timeout',
+          `Worker shutdown exceeded ${HOOK_TIMEOUTS.SHUTDOWN_TOTAL / 1000}s but port ${port} is still occupied.\n\n` +
+          `This is likely a Windows zombie port (dead process holding socket).\n\n` +
+          `Choose action:`,
+          'abortretryignore'
+        );
+
+        logger.info('SYSTEM', 'User shutdown timeout choice', { choice });
+
+        switch (choice) {
+          case 'retry': {
+            // Wait another 15 seconds
+            logger.info('SYSTEM', 'User chose to retry - waiting additional 15s');
+            const retryFreed = await waitForPortFree(port, 15000);
+            if (!retryFreed) {
+              logger.error('SYSTEM', 'Port still occupied after retry wait');
+              showWindowsToast('claude-mem shutdown', 'Retry timeout - port still occupied');
+            }
+            break;
+          }
+          case 'ignore': {
+            // Force cleanup - dangerous, may cause zombie port
+            logger.warn('SYSTEM', 'User chose to ignore zombie port - proceeding with cleanup');
+            showWindowsToast('claude-mem shutdown', 'Ignoring zombie port - manual cleanup may be needed');
+            break;
+          }
+          case 'abort':
+          default: {
+            // Cancel operation - keep zombie port
+            logger.info('SYSTEM', 'User chose to abort - stop command cancelled');
+            console.log('\n[ABORTED] Stop command cancelled by user. Port remains occupied.');
+            console.log('To retry later, run: /worker-manage stop');
+            process.exit(1);  // Non-zero exit indicates abort
+            return;
+          }
+        }
       }
       removePidFile();
       logger.info('SYSTEM', 'Worker stopped successfully');
@@ -1218,11 +1261,13 @@ async function main() {
       logger.info('SYSTEM', 'Restarting worker');
       await httpShutdown(port);
       // Wait for port to be freed after graceful shutdown.
-      // Use 45s timeout because deleteSession() waits up to 30s for generator abort,
-      // and we need extra time for the shutdown sequence (HTTP close + DB close + subprocess cleanup).
-      const restartFreed = await waitForPortFree(port, getPlatformTimeout(45000));
+      // SHUTDOWN_TOTAL accounts for: HTTP close(~1s) + generator abort(30s) + MCP/Chroma/DB(~5s) + supervisor(5s) + margin
+      const restartFreed = await waitForPortFree(port, getPlatformTimeout(HOOK_TIMEOUTS.SHUTDOWN_TOTAL));
       if (!restartFreed) {
-        logger.error('SYSTEM', 'Port did not free up after shutdown, aborting restart', { port });
+        logger.error('SYSTEM', 'Port did not free up after shutdown, aborting restart', {
+          port,
+          timeoutMs: HOOK_TIMEOUTS.SHUTDOWN_TOTAL
+        });
         process.exit(0);
       }
       removePidFile();

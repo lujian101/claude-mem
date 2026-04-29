@@ -78,9 +78,77 @@ export class OpenRouterAgent {
   }
 
   /**
+   * Look up a per-model override block, supporting wildcard patterns.
+   * Exact match takes priority; wildcard keys (containing '*') are tried in order.
+   * Example: "qwen3.5-*" matches "qwen3.5-turbo", "qwen3.5-lite", etc.
+   */
+  /**
+   * Try to resolve a model override from a config block (exact then wildcard).
+   */
+  private static matchModel(
+    config: Record<string, unknown>,
+    model: string,
+  ): Record<string, unknown> | undefined {
+    // Exact match
+    if (config[model] && typeof config[model] === 'object') {
+      return config[model] as Record<string, unknown>;
+    }
+    // Wildcard patterns
+    for (const key of Object.keys(config)) {
+      if (!key.includes('*') && !key.includes('?')) continue;
+      const re = new RegExp('^' + key.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.') + '$');
+      if (re.test(model) && config[key] && typeof config[key] === 'object') {
+        return config[key] as Record<string, unknown>;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Look up a per-model override block with wildcard support.
+   * Returns a merged object: model-specific config + top-level defaults.
+   * Model-specific values take priority, but fall back to top-level for missing keys.
+   *
+   * Priority: mc.models[key] (new format) > mc[key] (legacy format) > {} (no override)
+   */
+  private static resolveModelOverride(
+    mc: Record<string, unknown>,
+    model: string,
+  ): Record<string, unknown> {
+    const models = mc.models;
+    let modelSpecific: Record<string, unknown> | undefined;
+
+    // 1) New format: "models" block
+    if (models && typeof models === 'object') {
+      modelSpecific = OpenRouterAgent.matchModel(models as Record<string, unknown>, model);
+    }
+    // 2) Legacy format: top-level keys (only if new format didn't match)
+    if (!modelSpecific) {
+      modelSpecific = OpenRouterAgent.matchModel(mc, model);
+    }
+
+    // If no model-specific config found, return empty (use all top-level defaults)
+    if (!modelSpecific) return {};
+
+    // Merge: top-level defaults + model-specific overrides
+    // Top-level keys that are NOT model-specific config (enable, model, api_key, base_url, etc.)
+    const topLevelDefaults: Record<string, unknown> = {};
+    const metaKeys = ['enable', 'models'];  // Keys that are not config values
+    for (const [key, value] of Object.entries(mc)) {
+      if (!metaKeys.includes(key) && typeof value !== 'object') {
+        topLevelDefaults[key] = value;
+      }
+    }
+
+    // Merge: defaults first, then override with model-specific values
+    return { ...topLevelDefaults, ...modelSpecific };
+  }
+
+  /**
    * Load per-model config from ~/.claude-mem/model-config.json with mtime-based hot-reload.
    * Top-level keys: "model" (override summary model), "base_url" (override API endpoint).
    * Per-model keys: { "model-name": { "extra_body": {...}, "base_url": "..." } }
+   * Wildcard keys like "qwen3.5-*" match multiple models.
    */
   private static loadModelConfig() {
     const configPath = `${DATA_DIR}/model-config.json`;
@@ -467,7 +535,7 @@ export class OpenRouterAgent {
     const modelConfig = OpenRouterAgent.loadModelConfig()!;
     const mc = modelConfig as Record<string, unknown>;
     const enabled = mc.enable !== false;
-    const modelOverride = (enabled && mc[model]) as Record<string, unknown> | undefined || {};
+    const modelOverride = enabled ? OpenRouterAgent.resolveModelOverride(mc, model) : {};
 
     // base_url override: per-model > model-config top-level > passed baseUrl > default
     // This matches getOpenRouterConfig() priority for consistency
@@ -582,7 +650,7 @@ export class OpenRouterAgent {
     const model = (enabled && mc.model as string) || settings.CLAUDE_MEM_OPENROUTER_MODEL || 'xiaomi/mimo-v2-flash:free';
 
     // Per-model override block
-    const modelOverride = (enabled && mc[model]) as Record<string, unknown> | undefined || {};
+    const modelOverride = enabled ? OpenRouterAgent.resolveModelOverride(mc, model) : {};
 
     // API key: per-model override > model-config top-level > settings > env
     const apiKey = (modelOverride.api_key as string)

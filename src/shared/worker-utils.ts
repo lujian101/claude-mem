@@ -247,7 +247,103 @@ export async function ensureWorkerRunning(): Promise<boolean> {
   return false;
 }
 
-// --- Worker-down toast notification (Windows only) ---
+// --- Windows toast notifications ---
+
+/**
+ * Show a Windows toast notification with a title and message.
+ * Uses BalloonTip via System.Windows.Forms (no BurntToast module required).
+ * Fire-and-forget: never throws, never blocks caller.
+ */
+export function showWindowsToast(title: string, message: string): void {
+  if (process.platform !== 'win32') return;
+  try {
+    const ps = Buffer.from(
+      `Add-Type -AssemblyName System.Windows.Forms;`
+      + `$n=New-Object System.Windows.Forms.NotifyIcon;`
+      + `$n.Icon=[System.Drawing.SystemIcons]::Warning;`
+      + `$n.BalloonTipTitle='${title.replace(/'/g, "''")}';`
+      + `$n.BalloonTipText='${message.replace(/'/g, "''")}';`
+      + `$n.Visible=$true;`
+      + `$n.ShowBalloonTip(5000);`
+      + `Start-Sleep 6;$n.Dispose()`,
+      'utf16le'
+    ).toString('base64');
+    execSync(
+      `powershell -NoProfile -NonInteractive -Command "Start-Process powershell -ArgumentList '-NoProfile','-EncodedCommand','${ps}' -WindowStyle Hidden"`,
+      { timeout: 5000, windowsHide: true, stdio: 'ignore' }
+    );
+  } catch {
+    // Toast failure must never block
+  }
+}
+
+/**
+ * Show a blocking Windows MessageBox with buttons, wait for user choice.
+ * Returns: 'abort' | 'retry' | 'ignore' (lowercase)
+ * Can be used for interactive decisions during error recovery.
+ *
+ * Button mappings:
+ * - Abort = 取消/放弃操作
+ * - Retry = 重试/继续等待
+ * - Ignore = 强制忽略/清理
+ *
+ * Uses independent PowerShell window so dialog survives worker process death.
+ */
+export function showWindowsMessageBox(
+  title: string,
+  message: string,
+  buttons: 'abortretryignore' | 'okcancel' | 'yesno' = 'abortretryignore'
+): 'abort' | 'retry' | 'ignore' | 'ok' | 'cancel' | 'yes' | 'no' {
+  if (process.platform !== 'win32') return 'abort';
+
+  try {
+    const buttonMap = {
+      abortretryignore: 'AbortRetryIgnore',
+      okcancel: 'OKCancel',
+      yesno: 'YesNo'
+    };
+    const psButtons = buttonMap[buttons] || 'AbortRetryIgnore';
+
+    // Escape single quotes in PowerShell strings
+    const safeTitle = title.replace(/'/g, "''");
+    const safeMessage = message.replace(/'/g, "''").replace(/\n/g, '`n');
+
+    const ps = Buffer.from(
+      `Add-Type -AssemblyName System.Windows.Forms;`
+      + `$result = [System.Windows.Forms.MessageBox]::Show(`
+      + `'${safeMessage}',`
+      + `'${safeTitle}',`
+      + `[System.Windows.Forms.MessageBoxButtons]::${psButtons},`
+      + `[System.Windows.Forms.MessageBoxIcon]::Warning`
+      + `);`
+      + `Write-Output $result`,
+      'utf16le'
+    ).toString('base64');
+
+    // Run in foreground and capture output - blocks until user clicks
+    const output = execSync(
+      `powershell -NoProfile -EncodedCommand ${ps}`,
+      { encoding: 'utf8', timeout: 300000, windowsHide: false }
+    ).trim();
+
+    // Map MessageBox result to return values
+    const resultMap: Record<string, 'abort' | 'retry' | 'ignore' | 'ok' | 'cancel' | 'yes' | 'no'> = {
+      'Abort': 'abort',
+      'Retry': 'retry',
+      'Ignore': 'ignore',
+      'OK': 'ok',
+      'Cancel': 'cancel',
+      'Yes': 'yes',
+      'No': 'no'
+    };
+
+    return resultMap[output] || 'abort';
+  } catch (error) {
+    // On any error, default to 'abort' (safe choice)
+    return 'abort';
+  }
+}
+
 const WORKER_TOAST_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes between toasts
 
 function showWorkerDownToast(): void {
@@ -260,24 +356,7 @@ function showWorkerDownToast(): void {
       if (elapsed < WORKER_TOAST_COOLDOWN_MS) return;
     }
     writeFileSync(markerPath, '', 'utf-8');
-    const ps = Buffer.from(
-      `Add-Type -AssemblyName System.Windows.Forms;`
-      + `$n=New-Object System.Windows.Forms.NotifyIcon;`
-      + `$n.Icon=[System.Drawing.SystemIcons]::Warning;`
-      + `$n.BalloonTipTitle='Claude-Mem';`
-      + `$n.BalloonTipText='Worker not running — use worker-start.bat to start';`
-      + `$n.Visible=$true;`
-      + `$n.ShowBalloonTip(5000);`
-      + `Start-Sleep 6;$n.Dispose()`,
-      'utf16le'
-    ).toString('base64');
-    // Use Start-Process to spawn an independent PowerShell for the toast.
-    // execSync ensures Start-Process completes before the hook exits;
-    // the inner PowerShell process is fully decoupled via Start-Process.
-    execSync(
-      `powershell -NoProfile -NonInteractive -Command "Start-Process powershell -ArgumentList '-NoProfile','-EncodedCommand','${ps}' -WindowStyle Hidden"`,
-      { timeout: 5000, windowsHide: true, stdio: 'ignore' }
-    );
+    showWindowsToast('Claude-Mem', 'Worker not running — use worker-start.bat to start');
   } catch {
     // Toast failure must never block the hook
   }

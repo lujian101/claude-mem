@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import { logger } from '../utils/logger.js';
 import { HOOK_TIMEOUTS } from '../shared/hook-constants.js';
 import { isPidAlive, type ManagedProcessRecord, type ProcessRegistry } from './process-registry.js';
+import { showWindowsToast } from '../shared/worker-utils.js';
 
 const execFileAsync = promisify(execFile);
 const DATA_DIR = path.join(homedir(), '.claude-mem');
@@ -54,6 +55,9 @@ export async function runShutdownCascade(options: ShutdownCascadeOptions): Promi
   await waitForExit(childRecords, 5000);
 
   const survivors = childRecords.filter(record => isPidAlive(record.pid));
+  if (survivors.length > 0) {
+    showWindowsToast('claude-mem shutdown', `SIGKILL ${survivors.map(r => `${r.type}=${r.pid}`).join(', ')} | shutdownCascade`);
+  }
   for (const record of survivors) {
     try {
       await signalProcess(record.pid, 'SIGKILL');

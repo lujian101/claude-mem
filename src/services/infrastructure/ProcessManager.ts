@@ -17,6 +17,7 @@ import { logger } from '../../utils/logger.js';
 import { HOOK_TIMEOUTS } from '../../shared/hook-constants.js';
 import { sanitizeEnv } from '../../supervisor/env-sanitizer.js';
 import { getSupervisor, validateWorkerPidFile, type ValidateWorkerPidStatus } from '../../supervisor/index.js';
+import { showWindowsToast } from '../../shared/worker-utils.js';
 
 const execAsync = promisify(exec);
 
@@ -297,6 +298,9 @@ export async function forceKillProcess(pid: number): Promise<void> {
     return;
   }
 
+  // Alert user before force-killing — helps diagnose zombie port issues
+  showWindowsToast('claude-mem forceKill', `PID=${pid} | forceKillProcess`);
+
   try {
     if (process.platform === 'win32') {
       // /T kills entire process tree, /F forces termination
@@ -498,6 +502,7 @@ export async function cleanupOrphanedProcesses(): Promise<void> {
 
   // Kill all found processes
   if (isWindows) {
+    showWindowsToast('claude-mem orphan-kill', `PIDs=[${pidsToKill.join(',')}] | cleanupOrphanProcesses`);
     for (const pid of pidsToKill) {
       // SECURITY: Double-check PID validation before using in taskkill command
       if (!Number.isInteger(pid) || pid <= 0) {
@@ -689,6 +694,7 @@ export async function aggressiveStartupCleanup(): Promise<void> {
   });
 
   if (isWindows) {
+    showWindowsToast('claude-mem startup-cleanup', `PIDs=[${pidsToKill.join(',')}] | aggressiveStartupCleanup`);
     for (const pid of pidsToKill) {
       if (!Number.isInteger(pid) || pid <= 0) continue;
       try {
@@ -1258,6 +1264,7 @@ export async function cleanupZombiePort(port: number): Promise<boolean> {
   }
 
   logger.warn('SYSTEM', 'Zombie port detected: TCP port held by process', { port, pid });
+  showWindowsToast('claude-mem zombie-port', `port=${port} PID=${pid} | cleanupZombiePort`);
 
   // Try to kill the process (and its children)
   try {

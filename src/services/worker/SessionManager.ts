@@ -17,6 +17,7 @@ import { SessionQueueProcessor } from '../queue/SessionQueueProcessor.js';
 import { getProcessBySession, ensureProcessExit } from './ProcessRegistry.js';
 import { getSupervisor } from '../../supervisor/index.js';
 import { MAX_CONSECUTIVE_SUMMARY_FAILURES } from '../../sdk/prompts.js';
+import { HOOK_TIMEOUTS } from '../../shared/hook-constants.js';
 
 /** Idle threshold before a stuck generator (zombie subprocess) is force-killed. */
 export const MAX_GENERATOR_IDLE_MS = 5 * 60 * 1000; // 5 minutes
@@ -393,10 +394,13 @@ export class SessionManager {
         logger.debug('SYSTEM', 'Generator already failed, cleaning up', { sessionId: session.sessionDbId });
       });
       const timeoutDone = new Promise<void>(resolve => {
-        AbortSignal.timeout(30_000).addEventListener('abort', () => resolve(), { once: true });
+        AbortSignal.timeout(HOOK_TIMEOUTS.GENERATOR_ABORT).addEventListener('abort', () => resolve(), { once: true });
       });
       await Promise.race([generatorDone, timeoutDone]).then(() => {}, () => {
-        logger.warn('SESSION', 'Generator did not exit within 30s after abort, forcing cleanup (#1099)', { sessionDbId });
+        logger.warn('SESSION', 'Generator did not exit within 30s after abort, forcing cleanup (#1099)', {
+          sessionDbId,
+          timeoutMs: HOOK_TIMEOUTS.GENERATOR_ABORT
+        });
       });
     }
 

@@ -49,40 +49,94 @@ export interface GracefulShutdownConfig {
  * to prevent zombie ports. The socket handle can be inherited by children,
  * and if not properly closed, the port stays bound after process death.
  */
+/**
+ * Perform graceful shutdown of all services with detailed timing and error tracking
+ *
+ * IMPORTANT: On Windows, we must kill all child processes before exiting
+ * to prevent zombie ports. The socket handle can be inherited by children,
+ * and if not properly closed, the port stays bound after process death.
+ */
 export async function performGracefulShutdown(config: GracefulShutdownConfig): Promise<void> {
-  logger.info('SYSTEM', 'Shutdown initiated');
+  const shutdownStart = Date.now();
+  logger.info('SYSTEM', 'Shutdown initiated', { timestamp: new Date().toISOString() });
 
   // STEP 1: Close HTTP server first
+  const step1Start = Date.now();
   if (config.server) {
-    await closeHttpServer(config.server);
-    logger.info('SYSTEM', 'HTTP server closed');
+    try {
+      await closeHttpServer(config.server);
+      const step1Elapsed = Date.now() - step1Start;
+      logger.info('SYSTEM', 'HTTP server closed', { elapsedMs: step1Elapsed });
+    } catch (error) {
+      const step1Elapsed = Date.now() - step1Start;
+      logger.error('SYSTEM', 'HTTP server close failed', { elapsedMs: step1Elapsed }, error as Error);
+    }
   }
 
   // STEP 2: Shutdown active sessions
-  await config.sessionManager.shutdownAll();
+  const step2Start = Date.now();
+  try {
+    await config.sessionManager.shutdownAll();
+    const step2Elapsed = Date.now() - step2Start;
+    logger.info('SYSTEM', 'Sessions shutdown', { elapsedMs: step2Elapsed });
+  } catch (error) {
+    const step2Elapsed = Date.now() - step2Start;
+    logger.error('SYSTEM', 'Session shutdown failed', { elapsedMs: step2Elapsed }, error as Error);
+  }
 
   // STEP 3: Close MCP client connection (signals child to exit gracefully)
+  const step3Start = Date.now();
   if (config.mcpClient) {
-    await config.mcpClient.close();
-    logger.info('SYSTEM', 'MCP client closed');
+    try {
+      await config.mcpClient.close();
+      const step3Elapsed = Date.now() - step3Start;
+      logger.info('SYSTEM', 'MCP client closed', { elapsedMs: step3Elapsed });
+    } catch (error) {
+      const step3Elapsed = Date.now() - step3Start;
+      logger.error('SYSTEM', 'MCP client close failed', { elapsedMs: step3Elapsed }, error as Error);
+    }
   }
 
   // STEP 4: Stop Chroma MCP connection
+  const step4Start = Date.now();
   if (config.chromaMcpManager) {
-    logger.info('SHUTDOWN', 'Stopping Chroma MCP connection...');
-    await config.chromaMcpManager.stop();
-    logger.info('SHUTDOWN', 'Chroma MCP connection stopped');
+    try {
+      logger.info('SHUTDOWN', 'Stopping Chroma MCP connection...');
+      await config.chromaMcpManager.stop();
+      const step4Elapsed = Date.now() - step4Start;
+      logger.info('SHUTDOWN', 'Chroma MCP connection stopped', { elapsedMs: step4Elapsed });
+    } catch (error) {
+      const step4Elapsed = Date.now() - step4Start;
+      logger.error('SHUTDOWN', 'Chroma MCP stop failed', { elapsedMs: step4Elapsed }, error as Error);
+    }
   }
 
   // STEP 5: Close database connection (includes ChromaSync cleanup)
+  const step5Start = Date.now();
   if (config.dbManager) {
-    await config.dbManager.close();
+    try {
+      await config.dbManager.close();
+      const step5Elapsed = Date.now() - step5Start;
+      logger.info('SYSTEM', 'Database closed', { elapsedMs: step5Elapsed });
+    } catch (error) {
+      const step5Elapsed = Date.now() - step5Start;
+      logger.error('SYSTEM', 'Database close failed', { elapsedMs: step5Elapsed }, error as Error);
+    }
   }
 
   // STEP 6: Supervisor handles tracked child termination, PID cleanup, and stale sockets.
-  await stopSupervisor();
+  const step6Start = Date.now();
+  try {
+    await stopSupervisor();
+    const step6Elapsed = Date.now() - step6Start;
+    logger.info('SYSTEM', 'Supervisor stopped', { elapsedMs: step6Elapsed });
+  } catch (error) {
+    const step6Elapsed = Date.now() - step6Start;
+    logger.error('SYSTEM', 'Supervisor stop failed', { elapsedMs: step6Elapsed }, error as Error);
+  }
 
-  logger.info('SYSTEM', 'Worker shutdown complete');
+  const totalElapsed = Date.now() - shutdownStart;
+  logger.info('SYSTEM', 'Worker shutdown complete', { totalElapsedMs: totalElapsed });
 }
 
 /**

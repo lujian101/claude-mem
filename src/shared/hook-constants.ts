@@ -7,7 +7,12 @@ export const HOOK_TIMEOUTS = {
   WORKER_STARTUP_WAIT: 1000,
   PRE_RESTART_SETTLE_DELAY: 2000,  // Give files time to sync before restart
   POWERSHELL_COMMAND: 10000,     // PowerShell process enumeration (10s - typically completes in <1s)
-  WINDOWS_MULTIPLIER: 1.5     // Platform-specific adjustment for hook-side operations
+  WINDOWS_MULTIPLIER: 1.5,       // Platform-specific adjustment for hook-side operations
+
+  // Shutdown timeouts (must account for generator abort + cleanup)
+  GENERATOR_ABORT: 30000,         // Max wait for generator to exit after abort signal (SessionManager.ts)
+  SHUTDOWN_TOTAL: 45000,          // Max wait for complete shutdown (stop/restart commands)
+                                    // Breakdown: HTTP close(~1s) + generator abort(30s) + MCP/Chroma/DB(~5s) + supervisor(5s) + margin
 } as const;
 
 /**

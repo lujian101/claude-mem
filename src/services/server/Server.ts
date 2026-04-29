@@ -91,10 +91,16 @@ export class Server {
 
   /**
    * Start listening on the specified host and port
+   * Uses options form for better socket control (helps with port recycling on Windows)
    */
   async listen(port: number, host: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      this.server = this.app.listen(port, host, () => {
+      this.server = this.app.listen({
+        port,
+        host,
+        exclusive: false,   // Allow socket reuse — faster port recycling after shutdown
+        ipv6Only: false,
+      }, () => {
         logger.info('SYSTEM', 'HTTP server started', { host, port, pid: process.pid });
         resolve();
       });

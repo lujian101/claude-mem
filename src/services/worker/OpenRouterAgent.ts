@@ -542,11 +542,15 @@ export class OpenRouterAgent {
     const modelBaseUrl = (modelOverride.base_url as string) || (enabled && mc.base_url as string) || undefined;
     const apiUrl = modelBaseUrl || baseUrl || OPENROUTER_API_URL;
 
-    logger.debug('SDK', `Querying OpenRouter multi-turn (${model})`, {
+    logger.info('SDK', `Querying OpenRouter multi-turn (${model})`, {
       turns: truncatedHistory.length,
       totalChars,
       estimatedTokens,
-      apiUrl
+      apiUrl,
+      apiKeyPrefix: apiKey ? `${apiKey.substring(0, 8)}...` : '(empty)',
+      modelOverrideKeys: Object.keys(modelOverride),
+      topLevelApiKey: mc.api_key ? `${(mc.api_key as string).substring(0, 8)}...` : '(none)',
+      topLevelBaseUrl: mc.base_url || '(none)',
     });
 
     // Determine if this is the official OpenRouter endpoint (for analytics headers)
@@ -664,6 +668,14 @@ export class OpenRouterAgent {
       || (enabled && mc.base_url as string)
       || settings.CLAUDE_MEM_OPENROUTER_BASE_URL
       || OPENROUTER_API_URL;
+
+    logger.info('SDK', 'OpenRouter config resolved', {
+      model,
+      apiKeySource: modelOverride.api_key ? 'modelOverride' : mc.api_key ? 'topLevel' : settings.CLAUDE_MEM_OPENROUTER_API_KEY ? 'settings' : getCredential('OPENROUTER_API_KEY') ? 'credential' : 'empty',
+      apiKeyPrefix: apiKey ? `${apiKey.substring(0, 8)}...` : '(empty)',
+      baseUrl,
+      modelOverrideKeys: Object.keys(modelOverride),
+    });
 
     // Optional analytics headers (always from settings)
     const siteUrl = settings.CLAUDE_MEM_OPENROUTER_SITE_URL || '';
